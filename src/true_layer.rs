@@ -3,6 +3,7 @@ use std::fmt::{self, Display};
 
 use anyhow::anyhow;
 use serde::Deserialize;
+use surf::http::StatusCode;
 
 pub struct Client {
     config: TrueLayerConfig,
@@ -51,6 +52,21 @@ pub struct Provider {
     pub logo_url: String,
 }
 
+#[derive(Deserialize)]
+struct Results<T> {
+    results: Vec<T>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TokenMetadata {
+    pub provider: ProviderMetadata,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProviderMetadata {
+    pub provider_id: String,
+}
+
 impl Client {
     pub fn new() -> Client {
         Client {
@@ -74,11 +90,30 @@ impl Client {
             .await
             .map_err(|e| anyhow!(e))?;
 
-        if res.status() != surf::http::StatusCode::OK {
+        if res.status() != StatusCode::OK {
             return tl_error(res).await;
         }
 
         Ok(res.body_json().await?)
+    }
+
+    pub async fn token_metadata(&self, access_token: &str) -> anyhow::Result<TokenMetadata> {
+        let mut res = surf::get("https://api.truelayer-sandbox.com/data/v1/me")
+            .set_header("Authorization", &format!("Bearer {}", access_token))
+            .await
+            .map_err(|e| anyhow!(e))?;
+
+        if res.status() != StatusCode::OK {
+            return tl_error(res).await;
+        }
+
+        Ok(res
+            .body_json::<Results<_>>()
+            .await?
+            .results
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("invalid metadata response"))?)
     }
 
     pub async fn supported_providers(&self) -> anyhow::Result<Vec<Provider>> {

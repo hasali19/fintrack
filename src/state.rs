@@ -2,14 +2,16 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::config::Config;
+use crate::db::Db;
 use crate::true_layer::Client as TrueLayerClient;
 
 #[derive(Clone)]
 pub struct State(Arc<StateInner>);
 
 impl State {
-    pub fn new() -> State {
+    pub fn new(db: Db) -> State {
         State(Arc::new(StateInner {
+            db,
             config: Config::from_env(),
             true_layer: TrueLayerClient::new(),
         }))
@@ -24,11 +26,16 @@ impl Deref for State {
 }
 
 pub struct StateInner {
+    db: Db,
     config: Config,
     true_layer: TrueLayerClient,
 }
 
 impl StateInner {
+    pub fn db(&self) -> &Db {
+        &self.db
+    }
+
     pub fn config(&self) -> &Config {
         &self.config
     }

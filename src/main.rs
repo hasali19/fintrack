@@ -12,6 +12,7 @@ use tide::{Redirect, Response, StatusCode};
 use async_ctrlc::CtrlC;
 use async_sqlx_session::SqliteSessionStore;
 use async_std::prelude::FutureExt;
+use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqliteRow;
 use sqlx::Row;
@@ -31,7 +32,7 @@ async fn main() -> tide::Result<()> {
     let port = 8000;
 
     let db = Db::connect("sqlite://fintrack.db").await?;
-    let state = State::new();
+    let state = State::new(db.clone());
 
     fetch_new_providers(&db, state.true_layer()).await?;
 
@@ -58,6 +59,7 @@ async fn main() -> tide::Result<()> {
     let mut api = app.at("/api");
 
     api.at("/session").get(get_session);
+    api.at("/providers").get(get_connected_providers);
 
     app.listen(format!("{}:{}", address, port))
         .race(async {
@@ -119,18 +121,34 @@ struct CallbackQueryError {
     error: String,
 }
 
-async fn callback(mut req: Request) -> tide::Result {
+async fn callback(req: Request) -> tide::Result {
     if let Ok(CallbackQueryError { error }) = req.query() {
         return Ok(error.into());
     }
 
     let params: CallbackQuerySuccess = req.query()?;
     let true_layer = req.state().true_layer();
-    let _ = true_layer
+
+    let token = true_layer
         .exchange_code(&params.code, &req.url_for("connect/callback")?)
         .await?;
 
-    req.session_mut().insert("authenticated", true)?;
+    let metadata = true_layer.token_metadata(&token.access_token).await?;
+    let expires_at = Utc::now() + Duration::seconds(token.expires_in);
+
+    let sql = "
+        UPDATE providers
+        SET access_token = ?, expires_at = ?, refresh_token = ?
+        WHERE id = ?
+    ";
+
+    sqlx::query(sql)
+        .bind(&token.access_token)
+        .bind(expires_at.timestamp())
+        .bind(&token.refresh_token)
+        .bind(&metadata.provider.provider_id)
+        .execute(req.state().db().pool())
+        .await?;
 
     Ok(Redirect::new(req.url_for("")?).into())
 }
@@ -149,5 +167,34 @@ async fn get_session(req: Request) -> tide::Result {
     Ok(Response::builder(StatusCode::Ok)
         .content_type("application/json")
         .body(serde_json::to_vec(&state)?)
+        .build())
+}
+
+#[derive(Serialize)]
+struct Provider {
+    id: String,
+    name: String,
+    logo: String,
+}
+
+async fn get_connected_providers(req: Request) -> tide::Result {
+    let sql = "
+        SELECT id, display_name, logo_url
+        FROM providers
+        WHERE refresh_token IS NOT NULL
+    ";
+
+    let providers = sqlx::query(sql)
+        .map(|row: SqliteRow| Provider {
+            id: row.get(0),
+            name: row.get(1),
+            logo: row.get(2),
+        })
+        .fetch_all(req.state().db().pool())
+        .await?;
+
+    Ok(Response::builder(StatusCode::Ok)
+        .content_type("application/json")
+        .body(serde_json::to_vec(&providers)?)
         .build())
 }

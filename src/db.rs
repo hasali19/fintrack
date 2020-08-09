@@ -1,5 +1,6 @@
 use sqlx::SqlitePool;
 
+#[derive(Clone)]
 pub struct Db(SqlitePool);
 
 impl Db {

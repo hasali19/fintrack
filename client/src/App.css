@@ -1,0 +1,22 @@
+.container {
+  margin: 32px;
+}
+
+.providers {
+  margin: -8px;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.provider {
+  margin: 8px;
+  padding: 16px;
+  background-color: lightgray;
+  border-radius: 4px;
+}
+
+.provider-logo {
+  width: 64px;
+  height: 64px;
+}
