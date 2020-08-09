@@ -28,9 +28,6 @@ async fn main() -> tide::Result<()> {
     dotenv::dotenv().ok();
     tide::log::start();
 
-    let address = "127.0.0.1";
-    let port = 8000;
-
     let db = Db::connect("sqlite://fintrack.db").await?;
     let state = State::new(db.clone());
 
@@ -60,6 +57,9 @@ async fn main() -> tide::Result<()> {
 
     api.at("/session").get(get_session);
     api.at("/providers").get(get_connected_providers);
+
+    let address = &state.config().http_address;
+    let port = state.config().http_port;
 
     app.listen(format!("{}:{}", address, port))
         .race(async {
