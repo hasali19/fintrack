@@ -1,1 +1,14 @@
+# Cargo output
 /target
+
+# Environment variables
+.env
+.env.*
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal
+
+# VSCode configuration
+.vscode
