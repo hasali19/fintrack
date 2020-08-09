@@ -14,6 +14,8 @@ use async_sqlx_session::SqliteSessionStore;
 use async_std::prelude::FutureExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::sqlite::SqliteRow;
+use sqlx::Row;
 
 use crate::db::Db;
 use crate::ext::*;
@@ -31,6 +33,8 @@ async fn main() -> tide::Result<()> {
 
     let db = Db::connect("sqlite://fintrack.db").await?;
     let state = State::new();
+
+    fetch_new_providers(&db, state.true_layer()).await?;
 
     let ctrlc = CtrlC::new()?;
     let mut app = tide::with_state(state.clone());
@@ -59,6 +63,26 @@ async fn main() -> tide::Result<()> {
         .await?;
 
     db.close().await;
+
+    Ok(())
+}
+
+async fn fetch_new_providers(db: &Db, true_layer: &true_layer::Client) -> anyhow::Result<()> {
+    let providers = true_layer.supported_providers().await?;
+    let known: Vec<String> = sqlx::query("SELECT id FROM providers")
+        .map(|row: SqliteRow| row.get(0))
+        .fetch_all(db.pool())
+        .await?;
+
+    for provider in providers.iter().filter(|p| !known.contains(&p.provider_id)) {
+        tide::log::info!("adding new provider '{}'", provider.provider_id);
+        sqlx::query("INSERT INTO providers (id, display_name, logo_url) VALUES (?, ?, ?)")
+            .bind(&provider.provider_id)
+            .bind(&provider.display_name)
+            .bind(&provider.logo_url)
+            .execute(db.pool())
+            .await?;
+    }
 
     Ok(())
 }

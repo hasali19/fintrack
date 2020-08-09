@@ -44,6 +44,13 @@ pub struct TokenResponse {
     pub token_type: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct Provider {
+    pub provider_id: String,
+    pub display_name: String,
+    pub logo_url: String,
+}
+
 impl Client {
     pub fn new() -> Client {
         Client {
@@ -73,6 +80,15 @@ impl Client {
         }
 
         Ok(res.body_json().await?)
+    }
+
+    pub async fn supported_providers(&self) -> anyhow::Result<Vec<Provider>> {
+        Ok(
+            surf::get("https://auth.truelayer-sandbox.com/api/providers")
+                .recv_json()
+                .await
+                .map_err(|e| anyhow!(e))?,
+        )
     }
 }
 
