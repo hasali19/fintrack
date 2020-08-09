@@ -58,19 +58,18 @@ impl Client {
         }
     }
 
-    pub fn auth_link(&self) -> &str {
-        self.config.auth_link.as_str()
+    pub fn auth_link(&self, callback: &str) -> String {
+        format!("{}&redirect_uri={}", self.config.auth_link, callback)
     }
 
-    pub async fn exchange_code(&self, code: &str) -> anyhow::Result<TokenResponse> {
-        // TODO: This url should be read from env
+    pub async fn exchange_code(&self, code: &str, callback: &str) -> anyhow::Result<TokenResponse> {
         let mut res = surf::post("https://auth.truelayer-sandbox.com/connect/token")
             .body_form(&serde_json::json!({
                 "client_id": self.config.client_id,
                 "client_secret": self.config.client_secret,
                 "code": code,
                 "grant_type": "authorization_code",
-                "redirect_uri": "http://localhost:8000/callback",
+                "redirect_uri": callback,
             }))?
             .await
             .map_err(|e| anyhow!(e))?;

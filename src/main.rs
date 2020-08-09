@@ -7,13 +7,12 @@ mod true_layer;
 use tide::http::cookies::SameSite;
 use tide::sessions::SessionMiddleware;
 use tide::utils::After;
-use tide::{Redirect, Response};
+use tide::{Redirect, Response, StatusCode};
 
 use async_ctrlc::CtrlC;
 use async_sqlx_session::SqliteSessionStore;
 use async_std::prelude::FutureExt;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use sqlx::sqlite::SqliteRow;
 use sqlx::Row;
 
@@ -53,7 +52,12 @@ async fn main() -> tide::Result<()> {
     app.with(After(error_handler));
 
     app.at("/").get(index);
-    app.at("/callback").get(callback);
+    app.at("/connect").get(connect);
+    app.at("/connect/callback").get(callback);
+
+    let mut api = app.at("/api");
+
+    api.at("/session").get(get_session);
 
     app.listen(format!("{}:{}", address, port))
         .race(async {
@@ -94,21 +98,14 @@ async fn error_handler(mut res: Response) -> tide::Result {
     Ok(res)
 }
 
-async fn index(req: Request) -> tide::Result {
-    let session = req.session();
+async fn index(_: Request) -> tide::Result {
+    Ok("FinTrack".into())
+}
+
+async fn connect(req: Request) -> tide::Result {
     let true_layer = req.state().true_layer();
-
-    match session.get("authenticated") {
-        Some(true) => {}
-        _ => return Ok(Redirect::new(true_layer.auth_link()).into()),
-    };
-
-    let data = json!({
-        "title": "Home",
-        "message": "Authenticated",
-    });
-
-    req.render_template("index", &data)
+    let location = true_layer.auth_link(&req.url_for("connect/callback")?);
+    Ok(Redirect::new(location).into())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -129,9 +126,28 @@ async fn callback(mut req: Request) -> tide::Result {
 
     let params: CallbackQuerySuccess = req.query()?;
     let true_layer = req.state().true_layer();
-    let _ = true_layer.exchange_code(&params.code).await?;
+    let _ = true_layer
+        .exchange_code(&params.code, &req.url_for("connect/callback")?)
+        .await?;
 
     req.session_mut().insert("authenticated", true)?;
 
-    Ok(Redirect::new("http://localhost:8000").into())
+    Ok(Redirect::new(req.url_for("")?).into())
+}
+
+#[derive(Serialize)]
+struct SessionState {
+    authenticated: bool,
+}
+
+async fn get_session(req: Request) -> tide::Result {
+    let session = req.session();
+    let state = SessionState {
+        authenticated: session.get("authenticated").unwrap_or(false),
+    };
+
+    Ok(Response::builder(StatusCode::Ok)
+        .content_type("application/json")
+        .body(serde_json::to_vec(&state)?)
+        .build())
 }
