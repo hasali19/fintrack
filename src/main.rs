@@ -7,7 +7,7 @@ mod true_layer;
 use tide::http::cookies::SameSite;
 use tide::sessions::SessionMiddleware;
 use tide::utils::After;
-use tide::{Redirect, Response, StatusCode};
+use tide::{Body, Redirect, Response, StatusCode};
 
 use async_ctrlc::CtrlC;
 use async_sqlx_session::SqliteSessionStore;
@@ -23,13 +23,15 @@ use crate::state::State;
 
 type Request = tide::Request<State>;
 
+struct AuthProvider(Db);
+
 #[async_std::main]
 async fn main() -> tide::Result<()> {
     dotenv::dotenv().ok();
     tide::log::start();
 
     let db = Db::connect("sqlite://fintrack.db").await?;
-    let state = State::new(db.clone());
+    let state = State::new(db.clone(), AuthProvider(db.clone()));
 
     fetch_new_providers(&db, state.true_layer()).await?;
 
@@ -55,8 +57,8 @@ async fn main() -> tide::Result<()> {
 
     let mut api = app.at("/api");
 
-    api.at("/session").get(get_session);
     api.at("/providers").get(get_connected_providers);
+    api.at("/accounts").get(get_accounts);
 
     let address = &state.config().http_address;
     let port = state.config().http_port;
@@ -129,12 +131,22 @@ async fn callback(req: Request) -> tide::Result {
     let params: CallbackQuerySuccess = req.query()?;
     let true_layer = req.state().true_layer();
 
-    let token = true_layer
+    let token_res = true_layer
         .exchange_code(&params.code, &req.url_for("connect/callback")?)
         .await?;
 
-    let metadata = true_layer.token_metadata(&token.access_token).await?;
-    let expires_at = Utc::now() + Duration::seconds(token.expires_in);
+    save_credentials(req.state().db(), true_layer, token_res).await?;
+
+    Ok(Redirect::new(req.url_for("")?).into())
+}
+
+async fn save_credentials(
+    db: &Db,
+    true_layer: &true_layer::Client,
+    token_res: true_layer::TokenResponse,
+) -> anyhow::Result<String> {
+    let metadata = true_layer.token_metadata(&token_res.access_token).await?;
+    let expires_at = Utc::now() + Duration::seconds(token_res.expires_in);
 
     let sql = "
         UPDATE providers
@@ -143,31 +155,14 @@ async fn callback(req: Request) -> tide::Result {
     ";
 
     sqlx::query(sql)
-        .bind(&token.access_token)
+        .bind(&token_res.access_token)
         .bind(expires_at.timestamp())
-        .bind(&token.refresh_token)
+        .bind(&token_res.refresh_token)
         .bind(&metadata.provider.provider_id)
-        .execute(req.state().db().pool())
+        .execute(db.pool())
         .await?;
 
-    Ok(Redirect::new(req.url_for("")?).into())
-}
-
-#[derive(Serialize)]
-struct SessionState {
-    authenticated: bool,
-}
-
-async fn get_session(req: Request) -> tide::Result {
-    let session = req.session();
-    let state = SessionState {
-        authenticated: session.get("authenticated").unwrap_or(false),
-    };
-
-    Ok(Response::builder(StatusCode::Ok)
-        .content_type("application/json")
-        .body(serde_json::to_vec(&state)?)
-        .build())
+    Ok(token_res.access_token)
 }
 
 #[derive(Serialize)]
@@ -193,8 +188,46 @@ async fn get_connected_providers(req: Request) -> tide::Result {
         .fetch_all(req.state().db().pool())
         .await?;
 
-    Ok(Response::builder(StatusCode::Ok)
-        .content_type("application/json")
-        .body(serde_json::to_vec(&providers)?)
-        .build())
+    Ok(Body::from_json(&providers)?.into())
+}
+
+#[derive(Deserialize)]
+struct GetAccountsQuery {
+    provider: String,
+}
+
+async fn get_accounts(req: Request) -> tide::Result {
+    let query: GetAccountsQuery = req.query()?;
+    let true_layer = req.state().true_layer();
+    let accounts = true_layer.accounts(&query.provider).await?;
+    Ok(Body::from_json(&accounts)?.into())
+}
+
+#[async_trait::async_trait]
+impl true_layer::AuthProvider for AuthProvider {
+    async fn access_token(
+        &self,
+        provider: &str,
+        true_layer: &true_layer::Client,
+    ) -> anyhow::Result<String> {
+        let sql = "
+            SELECT access_token, expires_at, refresh_token
+            FROM providers
+            WHERE id = ?
+        ";
+
+        let (access_token, expires_at, refresh_token): (String, i64, String) = sqlx::query(sql)
+            .bind(provider)
+            .map(|row: SqliteRow| (row.get(0), row.get(1), row.get(2)))
+            .fetch_one(self.0.pool())
+            .await?;
+
+        if expires_at > Utc::now().timestamp() {
+            return Ok(access_token);
+        }
+
+        let token_res = true_layer.renew_token(&refresh_token).await?;
+
+        Ok(save_credentials(&self.0, true_layer, token_res).await?)
+    }
 }

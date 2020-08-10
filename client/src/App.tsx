@@ -1,15 +1,6 @@
 import React, { useEffect, useState } from "react";
 import "./App.css";
 
-interface SessionState {
-  authenticated: boolean;
-}
-
-async function fetchSession(): Promise<SessionState> {
-  const res = await fetch("/api/session");
-  return await res.json();
-}
-
 interface Provider {
   id: string;
   name: string;
@@ -21,47 +12,80 @@ async function fetchProviders(): Promise<Provider[]> {
   return await res.json();
 }
 
+interface Account {
+  account_id: string;
+  account_type: string;
+  account_number: {
+    iban: string | null;
+    number: string | null;
+    sort_code: string | null;
+  };
+  currency: string;
+  display_name: string;
+  provider: {
+    provider_id: string;
+    display_name: string;
+    logo_uri: string;
+  };
+  description: string;
+}
+
+async function fetchAccounts(provider: Provider): Promise<Account[]> {
+  const res = await fetch(
+    "/api/accounts?provider=" + encodeURIComponent(provider.id)
+  );
+  return await res.json();
+}
+
+type AccountMap = Record<string, Account[] | undefined>;
+
 function App() {
-  const [session, setSession] = useState<SessionState | null>(null);
-  const [providers, setProviders] = useState<Provider[]>([]);
+  const [providers, setProviders] = useState<Provider[] | null>(null);
+  const [accounts, setAccounts] = useState<Record<
+    string,
+    Account[] | undefined
+  > | null>(null);
 
   useEffect(() => {
-    fetchSession().then(setSession);
+    fetchProviders().then(setProviders);
   }, []);
 
   useEffect(() => {
-    if (session?.authenticated) {
-      fetchProviders().then(setProviders);
+    if (providers) {
+      providers.map((p) =>
+        fetchAccounts(p).then((res) =>
+          setAccounts((accs) => ({ ...accs, [p.id]: res }))
+        )
+      );
     }
-  }, [session]);
+  }, [providers]);
 
-  if (session === null) {
+  if (providers === null) {
     return <p>Loading...</p>;
   }
 
-  if (!session.authenticated) {
+  if (providers.length === 0) {
     return <a href="/connect">Connect</a>;
   }
 
   return (
     <div className="container">
-      <h2>Authenticated!</h2>
-      {providers.length === 0 ? (
-        <p>
-          No connected providers (<a href="/connect">connect</a>)
-        </p>
-      ) : (
-        <>
-          <h3>Connected providers</h3>
-          <div className="providers">
-            {providers.map((p) => (
-              <div className="provider">
-                <img src={p.logo} alt={p.name} className="provider-logo" />
-              </div>
-            ))}
+      <h2>Connected providers</h2>
+      <div className="providers">
+        {providers.map((p) => (
+          <div key={p.id}>
+            <h3>{p.name}</h3>
+            <img src={p.logo} alt={p.name} className="provider-logo" />
+            <h4>Accounts</h4>
+            <ul>
+              {accounts &&
+                accounts[p.id]?.map((a) => (
+                  <li key={a.account_id}>{a.display_name}</li>
+                ))}
+            </ul>
           </div>
-        </>
-      )}
+        ))}
+      </div>
     </div>
   );
 }
