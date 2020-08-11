@@ -1,13 +1,7 @@
-mod config;
-mod db;
-mod ext;
-mod state;
-mod true_layer;
-
 use tide::http::cookies::SameSite;
 use tide::sessions::SessionMiddleware;
 use tide::utils::After;
-use tide::{Body, Redirect, Response, StatusCode};
+use tide::{log, Body, Redirect, Response};
 
 use async_ctrlc::CtrlC;
 use async_sqlx_session::SqliteSessionStore;
@@ -17,23 +11,28 @@ use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqliteRow;
 use sqlx::Row;
 
-use crate::db::Db;
-use crate::ext::*;
-use crate::state::State;
-
-type Request = tide::Request<State>;
+use fintrack::prelude::*;
+use fintrack::{cron, true_layer};
+use fintrack::{Db, Request, State};
 
 struct AuthProvider(Db);
 
 #[async_std::main]
 async fn main() -> tide::Result<()> {
     dotenv::dotenv().ok();
-    tide::log::start();
+    log::start();
 
     let db = Db::connect("sqlite://fintrack.db").await?;
     let state = State::new(db.clone(), AuthProvider(db.clone()));
 
-    fetch_new_providers(&db, state.true_layer()).await?;
+    cron::new("update_providers", "0 0 0 * * * *")
+        .with_state(state.clone())
+        .spawn_with_task(|state| async move {
+            let res = fetch_new_providers(state.db(), state.true_layer()).await;
+            if let Err(e) = res {
+                log::error!("failed to fetch truelayer providers: {}", e.to_string());
+            }
+        });
 
     let ctrlc = CtrlC::new()?;
     let mut app = tide::with_state(state.clone());
@@ -82,14 +81,23 @@ async fn fetch_new_providers(db: &Db, true_layer: &true_layer::Client) -> anyhow
         .fetch_all(db.pool())
         .await?;
 
+    let mut count = 0;
+
     for provider in providers.iter().filter(|p| !known.contains(&p.provider_id)) {
-        tide::log::info!("adding new provider '{}'", provider.provider_id);
+        log::info!("adding new provider '{}'", provider.provider_id);
         sqlx::query("INSERT INTO providers (id, display_name, logo_url) VALUES (?, ?, ?)")
             .bind(&provider.provider_id)
             .bind(&provider.display_name)
             .bind(&provider.logo_url)
             .execute(db.pool())
             .await?;
+        count += 1;
+    }
+
+    if count == 0 {
+        log::info!("no new providers found");
+    } else {
+        log::info!("{} new providers were added", count);
     }
 
     Ok(())
