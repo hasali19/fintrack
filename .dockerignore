@@ -1,0 +1,23 @@
+# Git directory
+.git
+
+# Cargo output
+/target
+
+# Frontend dependencies
+client/node_modules
+
+# Environment variables
+.env
+.env.*
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal
+
+# VSCode configuration
+.vscode
+
+# Dockerfile (or else it will mess with the layer caching)
+Dockerfile
