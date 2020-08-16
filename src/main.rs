@@ -1,3 +1,4 @@
+use actix_files::{Files, NamedFile};
 use actix_web::{
     error::{ErrorBadRequest, ErrorInternalServerError},
     guard,
@@ -46,7 +47,6 @@ async fn main() -> anyhow::Result<()> {
                 .wrap(Logger::default())
                 .app_data(db.clone())
                 .app_data(true_layer.clone())
-                .route("/", web::get().to(index))
                 .route("/connect", web::get().to(connect))
                 .service(
                     web::resource("/connect/callback")
@@ -56,6 +56,8 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .route("/api/providers", web::get().to(get_connected_providers))
                 .route("/api/accounts", web::get().to(get_accounts))
+                .service(Files::new("/static", "client/build/static"))
+                .default_service(web::get().to(spa_index))
         }
     })
     .bind(format!("{}:{}", address, port))?
@@ -96,8 +98,8 @@ async fn fetch_new_providers(db: &Db, true_layer: &true_layer::Client) -> anyhow
     Ok(())
 }
 
-async fn index() -> impl Responder {
-    "FinTrack"
+async fn spa_index() -> actix_web::Result<impl Responder> {
+    Ok(NamedFile::open("client/build/index.html")?)
 }
 
 async fn connect(
