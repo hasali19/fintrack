@@ -1,73 +1,66 @@
-use tide::http::cookies::SameSite;
-use tide::sessions::SessionMiddleware;
-use tide::utils::After;
-use tide::{log, Body, Redirect, Response};
+use actix_web::{
+    error::{ErrorBadRequest, ErrorInternalServerError},
+    guard,
+    http::header,
+    middleware::Logger,
+    web::{self, Data, Query},
+    App, HttpRequest, HttpResponse, HttpServer, Responder,
+};
 
-use async_ctrlc::CtrlC;
-use async_sqlx_session::SqliteSessionStore;
-use async_std::prelude::FutureExt;
+use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqliteRow;
 use sqlx::Row;
 
-use fintrack::prelude::*;
 use fintrack::{cron, true_layer};
-use fintrack::{Db, Request, State};
+use fintrack::{Config, Db};
 
 struct AuthProvider(Db);
 
-#[async_std::main]
-async fn main() -> tide::Result<()> {
+#[actix_web::main]
+async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
-    log::start();
+    femme::start();
 
+    let config = Config::from_env();
     let db = Db::connect("sqlite://fintrack.db").await?;
-    let state = State::new(db.clone(), AuthProvider(db.clone()));
+    let true_layer = Data::new(true_layer::Client::new(AuthProvider(db.clone())));
 
     cron::new("update_providers", "0 0 0 * * * *")
-        .with_state(state.clone())
-        .spawn_with_task(|state| async move {
-            let res = fetch_new_providers(state.db(), state.true_layer()).await;
+        .with_state((db.clone(), true_layer.clone()))
+        .spawn_with_task(|(db, true_layer)| async move {
+            let res = fetch_new_providers(&db, true_layer.as_ref()).await;
             if let Err(e) = res {
                 log::error!("failed to fetch truelayer providers: {}", e.to_string());
             }
         });
 
-    let ctrlc = CtrlC::new()?;
-    let mut app = tide::with_state(state.clone());
+    let address = &config.http_address;
+    let port = config.http_port;
 
-    app.with({
-        let key = &state.config().secret_key;
-        let store = SqliteSessionStore::from_client(db.pool().clone());
-
-        store.migrate().await?;
-
-        SessionMiddleware::new(store, key)
-            .with_same_site_policy(SameSite::Lax)
-            .with_cookie_name("fintrack.sid")
-    });
-
-    app.with(After(error_handler));
-
-    app.at("/").get(index);
-    app.at("/connect").get(connect);
-    app.at("/connect/callback").get(callback);
-
-    let mut api = app.at("/api");
-
-    api.at("/providers").get(get_connected_providers);
-    api.at("/accounts").get(get_accounts);
-
-    let address = &state.config().http_address;
-    let port = state.config().http_port;
-
-    app.listen(format!("{}:{}", address, port))
-        .race(async {
-            ctrlc.await;
-            Ok(())
-        })
-        .await?;
+    HttpServer::new({
+        let db = db.clone();
+        move || {
+            App::new()
+                .wrap(Logger::default())
+                .app_data(db.clone())
+                .app_data(true_layer.clone())
+                .route("/", web::get().to(index))
+                .route("/connect", web::get().to(connect))
+                .service(
+                    web::resource("/connect/callback")
+                        .name("connect_callback")
+                        .guard(guard::Get())
+                        .to(callback),
+                )
+                .route("/api/providers", web::get().to(get_connected_providers))
+                .route("/api/accounts", web::get().to(get_accounts))
+        }
+    })
+    .bind(format!("{}:{}", address, port))?
+    .run()
+    .await?;
 
     db.close().await;
 
@@ -76,12 +69,12 @@ async fn main() -> tide::Result<()> {
 
 async fn fetch_new_providers(db: &Db, true_layer: &true_layer::Client) -> anyhow::Result<()> {
     let providers = true_layer.supported_providers().await?;
-    let known: Vec<String> = sqlx::query("SELECT id FROM providers")
+    let known = sqlx::query("SELECT id FROM providers")
         .map(|row: SqliteRow| row.get(0))
         .fetch_all(db.pool())
         .await?;
 
-    let mut count = 0;
+    let mut count = 0i32;
 
     for provider in providers.iter().filter(|p| !known.contains(&p.provider_id)) {
         log::info!("adding new provider '{}'", provider.provider_id);
@@ -103,49 +96,59 @@ async fn fetch_new_providers(db: &Db, true_layer: &true_layer::Client) -> anyhow
     Ok(())
 }
 
-async fn error_handler(mut res: Response) -> tide::Result {
-    if let Some(err) = res.take_error() {
-        res.set_body(err.to_string());
-    }
-    Ok(res)
+async fn index() -> impl Responder {
+    "FinTrack"
 }
 
-async fn index(_: Request) -> tide::Result {
-    Ok("FinTrack".into())
-}
-
-async fn connect(req: Request) -> tide::Result {
-    let true_layer = req.state().true_layer();
-    let location = true_layer.auth_link(&req.url_for("connect/callback")?);
-    Ok(Redirect::new(location).into())
+async fn connect(
+    req: HttpRequest,
+    true_layer: Data<true_layer::Client>,
+) -> actix_web::Result<impl Responder> {
+    let callback = req.url_for_static("connect_callback")?;
+    let location = true_layer.auth_link(callback.as_str());
+    Ok(HttpResponse::TemporaryRedirect()
+        .set_header(header::LOCATION, location)
+        .finish())
 }
 
 #[derive(Serialize, Deserialize)]
-struct CallbackQuerySuccess {
-    code: String,
-    scope: String,
+struct CallbackQuery {
+    code: Option<String>,
+    scope: Option<String>,
+    error: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct CallbackQueryError {
-    error: String,
-}
-
-async fn callback(req: Request) -> tide::Result {
-    if let Ok(CallbackQueryError { error }) = req.query() {
-        return Ok(error.into());
+async fn callback(
+    req: HttpRequest,
+    Query(query): Query<CallbackQuery>,
+    true_layer: Data<true_layer::Client>,
+    db: Db,
+) -> actix_web::Result<impl Responder> {
+    if let Some(error) = query.error {
+        return Err(ErrorBadRequest(error));
     }
 
-    let params: CallbackQuerySuccess = req.query()?;
-    let true_layer = req.state().true_layer();
+    let (code, _) = match (query.code, query.scope) {
+        (Some(code), Some(scope)) => (code, scope),
+        _ => {
+            return Err(ErrorBadRequest(
+                "'code' and 'scope' query parameters must be provided",
+            ))
+        }
+    };
 
     let token_res = true_layer
-        .exchange_code(&params.code, &req.url_for("connect/callback")?)
-        .await?;
+        .exchange_code(&code, req.url_for_static("connect_callback")?.as_str())
+        .await
+        .map_err(ErrorInternalServerError)?;
 
-    save_credentials(req.state().db(), true_layer, token_res).await?;
+    save_credentials(&db, true_layer.as_ref(), token_res)
+        .await
+        .map_err(ErrorInternalServerError)?;
 
-    Ok(Redirect::new(req.url_for("")?).into())
+    Ok(HttpResponse::TemporaryRedirect()
+        .set_header(header::LOCATION, req.url_for_static("/")?.as_str())
+        .finish())
 }
 
 async fn save_credentials(
@@ -180,7 +183,7 @@ struct Provider {
     logo: String,
 }
 
-async fn get_connected_providers(req: Request) -> tide::Result {
+async fn get_connected_providers(db: Db) -> actix_web::Result<impl Responder> {
     let sql = "
         SELECT id, display_name, logo_url
         FROM providers
@@ -193,10 +196,11 @@ async fn get_connected_providers(req: Request) -> tide::Result {
             name: row.get(1),
             logo: row.get(2),
         })
-        .fetch_all(req.state().db().pool())
-        .await?;
+        .fetch_all(db.pool())
+        .await
+        .map_err(ErrorInternalServerError)?;
 
-    Ok(Body::from_json(&providers)?.into())
+    Ok(HttpResponse::Ok().json(&providers))
 }
 
 #[derive(Deserialize)]
@@ -204,14 +208,19 @@ struct GetAccountsQuery {
     provider: String,
 }
 
-async fn get_accounts(req: Request) -> tide::Result {
-    let query: GetAccountsQuery = req.query()?;
-    let true_layer = req.state().true_layer();
-    let accounts = true_layer.accounts(&query.provider).await?;
-    Ok(Body::from_json(&accounts)?.into())
+async fn get_accounts(
+    Query(query): Query<GetAccountsQuery>,
+    true_layer: Data<true_layer::Client>,
+) -> actix_web::Result<impl Responder> {
+    let accounts = true_layer
+        .accounts(&query.provider)
+        .await
+        .map_err(ErrorBadRequest)?;
+
+    Ok(HttpResponse::Ok().json(accounts))
 }
 
-#[async_trait::async_trait]
+#[async_trait]
 impl true_layer::AuthProvider for AuthProvider {
     async fn access_token(
         &self,

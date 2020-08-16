@@ -3,8 +3,8 @@ use std::fmt::{self, Display};
 
 use anyhow::anyhow;
 use async_trait::async_trait;
+use reqwest::{header, StatusCode};
 use serde::{Deserialize, Serialize};
-use surf::http::StatusCode;
 
 #[async_trait]
 pub trait AuthProvider {
@@ -12,6 +12,7 @@ pub trait AuthProvider {
 }
 
 pub struct Client {
+    client: reqwest::Client,
     config: TrueLayerConfig,
     auth_provider: Box<dyn AuthProvider + Send + Sync>,
 }
@@ -98,6 +99,7 @@ pub struct AccountNumber {
 impl Client {
     pub fn new(auth_provider: impl AuthProvider + Send + Sync + 'static) -> Client {
         Client {
+            client: reqwest::Client::new(),
             config: TrueLayerConfig::from_env(),
             auth_provider: Box::new(auth_provider),
         }
@@ -108,54 +110,60 @@ impl Client {
     }
 
     pub async fn exchange_code(&self, code: &str, callback: &str) -> anyhow::Result<TokenResponse> {
-        let mut res = surf::post("https://auth.truelayer-sandbox.com/connect/token")
-            .body_form(&serde_json::json!({
+        let res = self
+            .client
+            .post("https://auth.truelayer-sandbox.com/connect/token")
+            .form(&serde_json::json!({
                 "client_id": self.config.client_id,
                 "client_secret": self.config.client_secret,
                 "code": code,
                 "grant_type": "authorization_code",
                 "redirect_uri": callback,
-            }))?
-            .await
-            .map_err(|e| anyhow!(e))?;
+            }))
+            .send()
+            .await?;
 
         if res.status() != StatusCode::OK {
             return tl_error(res).await;
         }
 
-        Ok(res.body_json().await?)
+        Ok(res.json().await?)
     }
 
     pub async fn renew_token(&self, refresh_token: &str) -> anyhow::Result<TokenResponse> {
-        let mut res = surf::post("https://auth.truelayer-sandbox.com/connect/token")
-            .body_form(&serde_json::json!({
+        let res = self
+            .client
+            .post("https://auth.truelayer-sandbox.com/connect/token")
+            .form(&serde_json::json!({
                 "client_id": self.config.client_id,
                 "client_secret": self.config.client_secret,
                 "refresh_token": refresh_token,
                 "grant_type": "refresh_token",
-            }))?
-            .await
-            .map_err(|e| anyhow!(e))?;
+            }))
+            .send()
+            .await?;
 
         if res.status() != StatusCode::OK {
             return tl_error(res).await;
         }
 
-        Ok(res.body_json().await?)
+        Ok(res.json().await?)
     }
 
     pub async fn token_metadata(&self, access_token: &str) -> anyhow::Result<TokenMetadata> {
-        let mut res = surf::get("https://api.truelayer-sandbox.com/data/v1/me")
-            .set_header("Authorization", &format!("Bearer {}", access_token))
-            .await
-            .map_err(|e| anyhow!(e))?;
+        let res = self
+            .client
+            .get("https://api.truelayer-sandbox.com/data/v1/me")
+            .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
+            .send()
+            .await?;
 
         if res.status() != StatusCode::OK {
             return tl_error(res).await;
         }
 
         Ok(res
-            .body_json::<Results<_>>()
+            .json::<Results<_>>()
             .await?
             .results
             .into_iter()
@@ -164,32 +172,34 @@ impl Client {
     }
 
     pub async fn supported_providers(&self) -> anyhow::Result<Vec<Provider>> {
-        Ok(
-            surf::get("https://auth.truelayer-sandbox.com/api/providers")
-                .recv_json()
-                .await
-                .map_err(|e| anyhow!(e))?,
-        )
+        Ok(self
+            .client
+            .get("https://auth.truelayer-sandbox.com/api/providers")
+            .send()
+            .await?
+            .json()
+            .await?)
     }
 
     pub async fn accounts(&self, provider: &str) -> anyhow::Result<Vec<Account>> {
         let access_token = self.auth_provider.access_token(provider, &self).await?;
-        Ok(
-            surf::get("https://api.truelayer-sandbox.com/data/v1/accounts")
-                .set_header("Authorization", format!("Bearer {}", access_token))
-                .recv_json::<Results<_>>()
-                .await
-                .map_err(|e| anyhow!(e))?
-                .results,
-        )
+        Ok(self
+            .client
+            .get("https://api.truelayer-sandbox.com/data/v1/accounts")
+            .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
+            .send()
+            .await?
+            .json::<Results<_>>()
+            .await?
+            .results)
     }
 }
 
-async fn tl_error<T>(mut res: surf::Response) -> anyhow::Result<T> {
+async fn tl_error<T>(res: reqwest::Response) -> anyhow::Result<T> {
     let status = res.status();
 
     if status.is_client_error() {
-        let res: ErrorResponse = res.body_json().await?;
+        let res: ErrorResponse = res.json().await?;
         return Err(anyhow!(res));
     }
 

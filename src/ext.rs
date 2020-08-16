@@ -1,19 +1,14 @@
-use crate::Request;
+use actix_web::{dev::Payload, FromRequest, HttpRequest};
+use futures::future::Ready;
 
-pub trait RequestExt {
-    fn url_for(&self, path: &str) -> anyhow::Result<String>;
-}
+use crate::Db;
 
-impl RequestExt for Request {
-    fn url_for(&self, path: &str) -> anyhow::Result<String> {
-        let req_url = self.url();
-        Ok(format!(
-            "{}://{}/{}",
-            req_url.scheme(),
-            req_url
-                .host_str()
-                .ok_or_else(|| anyhow::anyhow!("failed to get request url"))?,
-            path
-        ))
+impl FromRequest for Db {
+    type Error = actix_web::Error;
+    type Future = Ready<Result<Self, Self::Error>>;
+    type Config = ();
+
+    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
+        futures::future::ok(req.app_data::<Db>().unwrap().clone())
     }
 }

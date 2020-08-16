@@ -1,9 +1,7 @@
 use std::{future::Future, str::FromStr};
 
-use async_std::task;
 use chrono::Utc;
 use cron::Schedule;
-use tide::log;
 
 pub struct Builder {
     name: String,
@@ -55,7 +53,7 @@ impl<S: Clone + Send + 'static> StatefulBuilder<S> {
         R: Future<Output = ()> + Send + 'static,
         F: Fn(S) -> R + Send + 'static,
     {
-        task::spawn(self.run_with_task(task));
+        tokio::task::spawn(self.run_with_task(task));
     }
 
     async fn run_with_task<R, F>(self, task: F)
@@ -67,10 +65,10 @@ impl<S: Clone + Send + 'static> StatefulBuilder<S> {
             log::info!("next run of '{}' is scheduled for {}", self.name, next);
             let dur = next - Utc::now();
             let dur = dur.to_std().unwrap();
-            task::sleep(dur).await;
+            tokio::time::delay_for(dur).await;
 
             log::info!("running task '{}'", self.name);
-            task::spawn((task)(self.state.clone()));
+            tokio::task::spawn((task)(self.state.clone()));
         }
     }
 }
