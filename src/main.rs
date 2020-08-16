@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqliteRow;
 use sqlx::Row;
 
-use fintrack::{cron, true_layer};
+use fintrack::cron;
 use fintrack::{Config, Db};
 
 struct AuthProvider(Db);

@@ -79,21 +79,30 @@ pub struct ProviderMetadata {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Account {
-    account_id: String,
-    account_type: String,
-    account_number: AccountNumber,
-    currency: String,
-    display_name: String,
-    update_timestamp: String,
-    provider: ProviderMetadata,
-    description: Option<String>,
+    pub account_id: String,
+    pub account_type: String,
+    pub account_number: AccountNumber,
+    pub currency: String,
+    pub display_name: String,
+    pub update_timestamp: String,
+    pub provider: ProviderMetadata,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AccountNumber {
-    iban: Option<String>,
-    number: Option<String>,
-    sort_code: Option<String>,
+    pub iban: Option<String>,
+    pub number: Option<String>,
+    pub sort_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountBalance {
+    pub currency: String,
+    pub available: f64,
+    pub current: f64,
+    pub overdraft: f64,
+    pub update_timestamp: String,
 }
 
 impl Client {
@@ -192,6 +201,35 @@ impl Client {
             .json::<Results<_>>()
             .await?
             .results)
+    }
+
+    pub async fn account_balance(
+        &self,
+        provider: &str,
+        account: &str,
+    ) -> anyhow::Result<AccountBalance> {
+        let access_token = self.auth_provider.access_token(provider, &self).await?;
+        let res = self
+            .client
+            .get(&format!(
+                "https://api.truelayer-sandbox.com/data/v1/accounts/{}/balance",
+                account
+            ))
+            .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
+            .send()
+            .await?;
+
+        if !res.status().is_success() {
+            return tl_error(res).await;
+        }
+
+        Ok(res
+            .json::<Results<_>>()
+            .await?
+            .results
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("invalid account balance response"))?)
     }
 }
 
