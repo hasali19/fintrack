@@ -3,8 +3,10 @@ use std::fmt::{self, Display};
 
 use anyhow::anyhow;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use reqwest::{header, StatusCode};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[async_trait]
 pub trait AuthProvider {
@@ -113,6 +115,27 @@ pub struct AccountBalance {
     pub current: f64,
     pub overdraft: f64,
     pub update_timestamp: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Transaction {
+    pub transaction_id: String,
+    pub timestamp: DateTime<Utc>,
+    pub description: String,
+    pub transaction_type: String,
+    pub transaction_category: String,
+    pub transaction_classification: Vec<String>,
+    pub merchant_name: Option<String>,
+    pub amount: f64,
+    pub currency: String,
+    pub meta: Value,
+    pub running_balance: TransactionRunningBalance,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TransactionRunningBalance {
+    pub amount: Option<f64>,
+    pub currency: Option<String>,
 }
 
 impl Client {
@@ -240,6 +263,51 @@ impl Client {
             .into_iter()
             .next()
             .ok_or_else(|| anyhow!("invalid account balance response"))?)
+    }
+
+    pub async fn transactions(
+        &self,
+        account: &str,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> anyhow::Result<Vec<Transaction>> {
+        let access_token = self.auth_provider.token_for_account(&self, account).await?;
+        let url = format!(
+            "https://api.truelayer-sandbox.com/data/v1/accounts/{}/transactions?from={}&to={}",
+            from.format("%DT%T"),
+            to.format("%DT%T")
+        );
+
+        let res = self
+            .client
+            .get(&url)
+            .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
+            .send()
+            .await?;
+
+        if res.status().is_success() {
+            return tl_error(res).await;
+        }
+
+        Ok(res.json::<Results<_>>().await?.results)
+    }
+
+    pub async fn pending_transactions(&self, account: &str) -> anyhow::Result<Vec<Transaction>> {
+        let access_token = self.auth_provider.token_for_account(&self, account).await?;
+        let url = format!("https://api.truelayer-sandbox.com/data/v1/accounts/{}/transactions",);
+
+        let res = self
+            .client
+            .get(&url)
+            .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
+            .send()
+            .await?;
+
+        if res.status().is_success() {
+            return tl_error(res).await;
+        }
+
+        Ok(res.json::<Results<_>>().await?.results)
     }
 }
 
