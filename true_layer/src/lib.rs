@@ -23,6 +23,11 @@ pub trait AuthProvider {
     ) -> anyhow::Result<String>;
 }
 
+pub enum Env {
+    Sandbox,
+    Live,
+}
+
 pub struct Client {
     client: reqwest::Client,
     config: TrueLayerConfig,
@@ -32,7 +37,7 @@ pub struct Client {
 pub struct TrueLayerConfig {
     client_id: String,
     client_secret: String,
-    auth_link: String,
+    env: Env,
 }
 
 impl TrueLayerConfig {
@@ -40,7 +45,13 @@ impl TrueLayerConfig {
         TrueLayerConfig {
             client_id: env::var("TRUE_LAYER_CLIENT_ID").unwrap(),
             client_secret: env::var("TRUE_LAYER_CLIENT_SECRET").unwrap(),
-            auth_link: env::var("TRUE_LAYER_AUTH_LINK").unwrap(),
+            env: env::var("TRUE_LAYER_ENV")
+                .map(|v| match v.to_lowercase().as_str() {
+                    "sandbox" => Env::Sandbox,
+                    "live" => Env::Live,
+                    _ => panic!("invalid value for `TRUE_LAYER_ENV`"),
+                })
+                .unwrap_or(Env::Sandbox),
         }
     }
 }
@@ -147,14 +158,38 @@ impl Client {
         }
     }
 
+    fn hostname(&self) -> &'static str {
+        match self.config.env {
+            Env::Sandbox => "truelayer-sandbox.com",
+            Env::Live => "truelayer.com",
+        }
+    }
+
     pub fn auth_link(&self, callback: &str) -> String {
-        format!("{}&redirect_uri={}", self.config.auth_link, callback)
+        let providers = match self.config.env {
+            Env::Sandbox => "uk-ob-all%20uk-oauth-all%20uk-cs-mock",
+            Env::Live => "uk-ob-all%20uk-oauth-all",
+        };
+
+        format!(
+            "https://auth.{}/?\
+                response_type=code&\
+                client_id={}&\
+                scope=info%20accounts%20balance%20cards%20transactions%20direct_debits%20standing_orders%20offline_access&\
+                redirect_uri={}&\
+                providers={}",
+            self.hostname(),
+            self.config.client_id,
+            callback,
+            providers,
+        )
     }
 
     pub async fn exchange_code(&self, code: &str, callback: &str) -> anyhow::Result<TokenResponse> {
+        let url = format!("https://auth.{}/connect/token", self.hostname());
         let res = self
             .client
-            .post("https://auth.truelayer-sandbox.com/connect/token")
+            .post(&url)
             .form(&serde_json::json!({
                 "client_id": self.config.client_id,
                 "client_secret": self.config.client_secret,
@@ -173,9 +208,10 @@ impl Client {
     }
 
     pub async fn renew_token(&self, refresh_token: &str) -> anyhow::Result<TokenResponse> {
+        let url = format!("https://auth.{}/connect/token", self.hostname());
         let res = self
             .client
-            .post("https://auth.truelayer-sandbox.com/connect/token")
+            .post(&url)
             .form(&serde_json::json!({
                 "client_id": self.config.client_id,
                 "client_secret": self.config.client_secret,
@@ -193,9 +229,10 @@ impl Client {
     }
 
     pub async fn token_metadata(&self, access_token: &str) -> anyhow::Result<TokenMetadata> {
+        let url = format!("https://api.{}/data/v1/me", self.hostname());
         let res = self
             .client
-            .get("https://api.truelayer-sandbox.com/data/v1/me")
+            .get(&url)
             .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
             .send()
             .await?;
@@ -214,13 +251,8 @@ impl Client {
     }
 
     pub async fn supported_providers(&self) -> anyhow::Result<Vec<Provider>> {
-        Ok(self
-            .client
-            .get("https://auth.truelayer-sandbox.com/api/providers")
-            .send()
-            .await?
-            .json()
-            .await?)
+        let url = format!("https://auth.{}/api/providers", self.hostname());
+        Ok(self.client.get(&url).send().await?.json().await?)
     }
 
     pub async fn accounts(&self, provider: &str) -> anyhow::Result<Vec<Account>> {
@@ -229,9 +261,11 @@ impl Client {
             .token_for_provider(&self, provider)
             .await?;
 
+        let url = format!("https://api.{}/data/v1/accounts", self.hostname());
+
         Ok(self
             .client
-            .get("https://api.truelayer-sandbox.com/data/v1/accounts")
+            .get(&url)
             .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
             .send()
             .await?
@@ -242,12 +276,15 @@ impl Client {
 
     pub async fn account_balance(&self, account: &str) -> anyhow::Result<AccountBalance> {
         let access_token = self.auth_provider.token_for_account(&self, account).await?;
+        let url = format!(
+            "https://api.{}/data/v1/accounts/{}/balance",
+            self.hostname(),
+            account
+        );
+
         let res = self
             .client
-            .get(&format!(
-                "https://api.truelayer-sandbox.com/data/v1/accounts/{}/balance",
-                account
-            ))
+            .get(&url)
             .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
             .send()
             .await?;
@@ -273,7 +310,9 @@ impl Client {
     ) -> anyhow::Result<Vec<Transaction>> {
         let access_token = self.auth_provider.token_for_account(&self, account).await?;
         let url = format!(
-            "https://api.truelayer-sandbox.com/data/v1/accounts/{}/transactions?from={}&to={}",
+            "https://api.{}/data/v1/accounts/{}/transactions?from={}&to={}",
+            account,
+            self.hostname(),
             from.format("%DT%T"),
             to.format("%DT%T")
         );
@@ -294,7 +333,11 @@ impl Client {
 
     pub async fn pending_transactions(&self, account: &str) -> anyhow::Result<Vec<Transaction>> {
         let access_token = self.auth_provider.token_for_account(&self, account).await?;
-        let url = format!("https://api.truelayer-sandbox.com/data/v1/accounts/{}/transactions",);
+        let url = format!(
+            "https://api.{}/data/v1/accounts/{}/transactions/pending",
+            self.hostname(),
+            account
+        );
 
         let res = self
             .client
