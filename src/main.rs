@@ -142,14 +142,20 @@ async fn callback(
     let token_res = true_layer
         .exchange_code(&code, req.url_for_static("connect_callback")?.as_str())
         .await
-        .map_err(ErrorInternalServerError)?;
+        .map_err(|_| ErrorInternalServerError("failed to exchange code for auth token"))?;
 
     save_credentials(&db, true_layer.as_ref(), token_res)
         .await
-        .map_err(ErrorInternalServerError)?;
+        .map_err(|_| ErrorInternalServerError("failed to save credentials"))?;
+
+    let index = format!(
+        "{}://{}",
+        req.connection_info().scheme(),
+        req.connection_info().host()
+    );
 
     Ok(HttpResponse::TemporaryRedirect()
-        .set_header(header::LOCATION, req.url_for_static("/")?.as_str())
+        .set_header(header::LOCATION, index)
         .finish())
 }
 
