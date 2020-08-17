@@ -13,7 +13,7 @@ use crate::{utils, Db};
 
 pub fn service(path: &str) -> impl HttpServiceFactory {
     web::scope(path)
-        .route("/", web::get().to(connect))
+        .route("", web::get().to(connect))
         .service(
             web::resource("/callback")
                 .name("connect_callback")
