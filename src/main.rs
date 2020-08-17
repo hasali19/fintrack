@@ -11,11 +11,9 @@ use actix_web::{
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqliteRow;
-use sqlx::Row;
 
 use fintrack::cron;
-use fintrack::{Config, Db};
+use fintrack::{db, Config, Db};
 
 struct AuthProvider(Db);
 
@@ -57,7 +55,6 @@ async fn main() -> anyhow::Result<()> {
                         .guard(guard::Get())
                         .to(callback),
                 )
-                .route("/api/providers", web::get().to(get_connected_providers))
                 .route("/api/accounts", web::get().to(get_accounts))
                 .service(Files::new("/static", "client/build/static"))
                 .default_service(web::get().to(spa_index))
@@ -74,21 +71,19 @@ async fn main() -> anyhow::Result<()> {
 
 async fn fetch_new_providers(db: &Db, true_layer: &true_layer::Client) -> anyhow::Result<()> {
     let providers = true_layer.supported_providers().await?;
-    let known = sqlx::query("SELECT id FROM providers")
-        .map(|row: SqliteRow| row.get(0))
-        .fetch_all(db.pool())
-        .await?;
+    let known = db::providers::all_ids(db).await?;
 
     let mut count = 0i32;
 
     for provider in providers.iter().filter(|p| !known.contains(&p.provider_id)) {
         log::info!("adding new provider '{}'", provider.provider_id);
-        sqlx::query("INSERT INTO providers (id, display_name, logo_url) VALUES (?, ?, ?)")
-            .bind(&provider.provider_id)
-            .bind(&provider.display_name)
-            .bind(&provider.logo_url)
-            .execute(db.pool())
-            .await?;
+
+        let id = &provider.provider_id;
+        let name = &provider.display_name;
+        let logo = &provider.logo_url;
+
+        db::providers::insert(db, id, name, logo).await?;
+
         count += 1;
     }
 
@@ -102,37 +97,23 @@ async fn fetch_new_providers(db: &Db, true_layer: &true_layer::Client) -> anyhow
 }
 
 async fn fetch_accounts(db: &Db, true_layer: &true_layer::Client) -> anyhow::Result<()> {
-    let providers: Vec<String> =
-        sqlx::query("SELECT id FROM providers WHERE refresh_token IS NOT NULL")
-            .map(|row: SqliteRow| row.get(0))
-            .fetch_all(db.pool())
-            .await?;
+    let providers = db::providers::connected_ids(db).await?;
 
     let mut total = 0;
 
     for provider in providers {
         let accounts = true_layer.accounts(&provider).await?;
         for account in accounts {
-            let sql = "
-                INSERT INTO accounts (id, provider_id, display_name)
-                VALUES (?, ?, ?)
-                ON CONFLICT DO NOTHING
-            ";
+            let id = &account.account_id;
+            let name = &account.display_name;
+            let created = db::accounts::insert(db, id, &provider, name).await?;
 
-            let count = sqlx::query(sql)
-                .bind(&account.account_id)
-                .bind(&provider)
-                .bind(&account.display_name)
-                .execute(db.pool())
-                .await?;
-
-            match count {
-                0 => log::info!("account '{}' already exists", account.display_name),
-                1 => log::info!("new account '{}' added to db", account.display_name),
-                _ => panic!("unexpected number of updated rows when inserting account"),
+            if created {
+                total += 1;
+                log::info!("new account '{}' added to db", account.display_name);
+            } else {
+                log::info!("account '{}' already exists", account.display_name);
             }
-
-            total += count;
         }
     }
 
@@ -210,48 +191,13 @@ async fn save_credentials(
     let metadata = true_layer.token_metadata(&token_res.access_token).await?;
     let expires_at = Utc::now() + Duration::seconds(token_res.expires_in);
 
-    let sql = "
-        UPDATE providers
-        SET access_token = ?, expires_at = ?, refresh_token = ?
-        WHERE id = ?
-    ";
+    let id = &metadata.provider.provider_id;
+    let access_token = &token_res.access_token;
+    let refresh_token = &token_res.refresh_token;
 
-    sqlx::query(sql)
-        .bind(&token_res.access_token)
-        .bind(expires_at.timestamp())
-        .bind(&token_res.refresh_token)
-        .bind(&metadata.provider.provider_id)
-        .execute(db.pool())
-        .await?;
+    db::providers::update_credentials(db, id, access_token, expires_at, refresh_token).await?;
 
     Ok(token_res.access_token)
-}
-
-#[derive(Serialize)]
-struct Provider {
-    id: String,
-    name: String,
-    logo: String,
-}
-
-async fn get_connected_providers(db: Db) -> actix_web::Result<impl Responder> {
-    let sql = "
-        SELECT id, display_name, logo_url
-        FROM providers
-        WHERE refresh_token IS NOT NULL
-    ";
-
-    let providers = sqlx::query(sql)
-        .map(|row: SqliteRow| Provider {
-            id: row.get(0),
-            name: row.get(1),
-            logo: row.get(2),
-        })
-        .fetch_all(db.pool())
-        .await
-        .map_err(ErrorInternalServerError)?;
-
-    Ok(HttpResponse::Ok().json(&providers))
 }
 
 #[derive(Deserialize)]
@@ -278,19 +224,10 @@ impl true_layer::AuthProvider for AuthProvider {
         provider: &str,
         true_layer: &true_layer::Client,
     ) -> anyhow::Result<String> {
-        let sql = "
-            SELECT access_token, expires_at, refresh_token
-            FROM providers
-            WHERE id = ?
-        ";
+        let (access_token, expires_at, refresh_token) =
+            db::providers::credentials(&self.0, provider).await?;
 
-        let (access_token, expires_at, refresh_token): (String, i64, String) = sqlx::query(sql)
-            .bind(provider)
-            .map(|row: SqliteRow| (row.get(0), row.get(1), row.get(2)))
-            .fetch_one(self.0.pool())
-            .await?;
-
-        if expires_at > Utc::now().timestamp() {
+        if expires_at > Utc::now() {
             return Ok(access_token);
         }
 

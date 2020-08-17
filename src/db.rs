@@ -1,3 +1,6 @@
+pub mod accounts;
+pub mod providers;
+
 use sqlx::SqlitePool;
 
 #[derive(Clone)]
