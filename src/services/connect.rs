@@ -7,9 +7,11 @@ use actix_web::{
     HttpRequest, HttpResponse, Responder,
 };
 
+use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{utils, Db};
+use crate::db::{self, providers::Provider, Db};
+use crate::utils;
 
 pub fn service(path: &str) -> impl HttpServiceFactory {
     web::scope(path)
@@ -65,9 +67,29 @@ async fn callback(
         .await
         .map_err(|_| ErrorInternalServerError("failed to exchange code for auth token"))?;
 
-    utils::save_credentials(&db, true_layer.as_ref(), token_res)
+    let metadata = true_layer
+        .token_metadata(&token_res.access_token)
         .await
-        .map_err(|_| ErrorInternalServerError("failed to save credentials"))?;
+        .map_err(|_| ErrorInternalServerError("failed to get metadata for auth tokens"))?;
+
+    let expires_at = Utc::now() + Duration::seconds(token_res.expires_in);
+
+    let provider = Provider {
+        id: metadata.provider.provider_id,
+        display_name: metadata.provider.display_name,
+        logo_url: metadata.provider.logo_uri,
+        refresh_token: token_res.refresh_token,
+        access_token: token_res.access_token,
+        expires_at,
+    };
+
+    db::providers::insert(&db, &provider)
+        .await
+        .map_err(|_| ErrorInternalServerError("failed to save provider to db"))?;
+
+    utils::fetch_provider_accounts(&db, true_layer.as_ref(), &provider.id)
+        .await
+        .map_err(|_| ErrorInternalServerError("failed to get accounts for provider"))?;
 
     let index = format!(
         "{}://{}",

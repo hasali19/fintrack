@@ -4,6 +4,15 @@ use sqlx::Row;
 
 use super::Db;
 
+pub struct Provider {
+    pub id: String,
+    pub display_name: String,
+    pub logo_url: String,
+    pub refresh_token: String,
+    pub access_token: String,
+    pub expires_at: DateTime<Utc>,
+}
+
 /// Gets the ids of all providers in the database.
 pub async fn all_ids(db: &Db) -> anyhow::Result<Vec<String>> {
     let providers = sqlx::query("SELECT id FROM providers")
@@ -14,28 +23,31 @@ pub async fn all_ids(db: &Db) -> anyhow::Result<Vec<String>> {
     Ok(providers)
 }
 
-/// Gets the id of all connected providers in the database.
-///
-/// A connected provider is one that has a non-null refresh_token.
-pub async fn connected_ids(db: &Db) -> anyhow::Result<Vec<String>> {
-    let providers = sqlx::query("SELECT id FROM providers WHERE refresh_token IS NOT NULL")
-        .map(|row: SqliteRow| row.get(0))
-        .fetch_all(db.pool())
-        .await?;
-
-    Ok(providers)
-}
-
 /// Inserts a new provider into the database.
-pub async fn insert(db: &Db, id: &str, display_name: &str, logo_url: &str) -> anyhow::Result<()> {
-    sqlx::query("INSERT INTO providers (id, display_name, logo_url) VALUES (?, ?, ?)")
-        .bind(id)
-        .bind(display_name)
-        .bind(logo_url)
+///
+/// Returns true if a new row was created, or false otherwise (i.e. a provider
+/// with the given id already exists).
+pub async fn insert(db: &Db, provider: &Provider) -> anyhow::Result<bool> {
+    let sql = "
+        INSERT INTO providers (id, display_name, logo_url, refresh_token, access_token, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ";
+
+    let count = sqlx::query(sql)
+        .bind(&provider.id)
+        .bind(&provider.display_name)
+        .bind(&provider.logo_url)
+        .bind(&provider.refresh_token)
+        .bind(&provider.access_token)
+        .bind(provider.expires_at.timestamp())
         .execute(db.pool())
         .await?;
 
-    Ok(())
+    if count > 1 {
+        return Err(anyhow::anyhow!("unexpected inserted row count: {}", count));
+    }
+
+    Ok(count == 1)
 }
 
 /// Gets the saved credentials (access_token, expires_at, refresh_token) for

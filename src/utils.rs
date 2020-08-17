@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 
-use crate::{db, Db};
+use crate::db::{self, Db};
 
 pub async fn save_credentials(
     db: &Db,
@@ -18,6 +18,27 @@ pub async fn save_credentials(
     db::providers::update_credentials(db, id, access_token, expires_at, refresh_token).await?;
 
     Ok(token_res.access_token)
+}
+
+pub async fn fetch_provider_accounts(
+    db: &Db,
+    true_layer: &true_layer::Client,
+    provider: &str,
+) -> anyhow::Result<()> {
+    let accounts = true_layer.accounts(&provider).await?;
+
+    for account in accounts {
+        let id = &account.account_id;
+        let name = &account.display_name;
+        let created = db::accounts::insert(db, id, &provider, name).await?;
+        if created {
+            log::info!("new account '{}' added to db", account.display_name);
+        } else {
+            log::info!("account '{}' already exists", account.display_name);
+        }
+    }
+
+    Ok(())
 }
 
 pub struct AuthProvider(Db);
@@ -43,7 +64,8 @@ impl true_layer::AuthProvider for AuthProvider {
         }
 
         let token_res = true_layer.renew_token(&refresh_token).await?;
+        let access_token = save_credentials(&self.0, true_layer, token_res).await?;
 
-        Ok(save_credentials(&self.0, true_layer, token_res).await?)
+        Ok(access_token)
     }
 }
