@@ -28,6 +28,9 @@ async fn main() -> anyhow::Result<()> {
     let db = Db::connect("sqlite://fintrack.db").await?;
     let true_layer = Data::new(true_layer::Client::new(AuthProvider(db.clone())));
 
+    fetch_new_providers(&db, true_layer.as_ref()).await?;
+    fetch_accounts(&db, true_layer.as_ref()).await?;
+
     cron::new("update_providers", "0 0 0 * * * *")
         .with_state((db.clone(), true_layer.clone()))
         .spawn_with_task(|(db, true_layer)| async move {
@@ -94,6 +97,46 @@ async fn fetch_new_providers(db: &Db, true_layer: &true_layer::Client) -> anyhow
     } else {
         log::info!("{} new providers were added", count);
     }
+
+    Ok(())
+}
+
+async fn fetch_accounts(db: &Db, true_layer: &true_layer::Client) -> anyhow::Result<()> {
+    let providers: Vec<String> =
+        sqlx::query("SELECT id FROM providers WHERE refresh_token IS NOT NULL")
+            .map(|row: SqliteRow| row.get(0))
+            .fetch_all(db.pool())
+            .await?;
+
+    let mut total = 0;
+
+    for provider in providers {
+        let accounts = true_layer.accounts(&provider).await?;
+        for account in accounts {
+            let sql = "
+                INSERT INTO accounts (id, provider_id, display_name)
+                VALUES (?, ?, ?)
+                ON CONFLICT DO NOTHING
+            ";
+
+            let count = sqlx::query(sql)
+                .bind(&account.account_id)
+                .bind(&provider)
+                .bind(&account.display_name)
+                .execute(db.pool())
+                .await?;
+
+            match count {
+                0 => log::info!("account '{}' already exists", account.display_name),
+                1 => log::info!("new account '{}' added to db", account.display_name),
+                _ => panic!("unexpected number of updated rows when inserting account"),
+            }
+
+            total += count;
+        }
+    }
+
+    log::info!("{} new accounts added to the db", total);
 
     Ok(())
 }
