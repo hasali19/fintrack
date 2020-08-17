@@ -3,9 +3,16 @@ use actix_web::{
 };
 
 use crate::{db, Db};
+use serde_json::json;
 
 pub fn service(path: &str) -> impl HttpServiceFactory {
-    web::scope(path).route("/accounts", web::get().to(get_accounts))
+    web::scope(path)
+        .route("/accounts", web::get().to(get_accounts))
+        .default_service(web::route().to(|| {
+            HttpResponse::NotFound().json(&json!({
+                "error": "not_found"
+            }))
+        }))
 }
 
 async fn get_accounts(db: Db) -> actix_web::Result<impl Responder> {
