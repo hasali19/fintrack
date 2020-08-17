@@ -1,6 +1,31 @@
+use serde::Serialize;
+use sqlx::sqlite::SqliteRow;
+use sqlx::Row;
+
 use super::Db;
 
-/// Insert a new account into the database.
+#[derive(Debug, Serialize)]
+pub struct Account {
+    pub id: String,
+    pub provider_id: String,
+    pub display_name: String,
+}
+
+/// Gets all accounts from the database.
+pub async fn all(db: &Db) -> anyhow::Result<Vec<Account>> {
+    let accounts = sqlx::query("SELECT id, provider_id, display_name FROM accounts")
+        .map(|row: SqliteRow| Account {
+            id: row.get(0),
+            provider_id: row.get(1),
+            display_name: row.get(2),
+        })
+        .fetch_all(db.pool())
+        .await?;
+
+    Ok(accounts)
+}
+
+/// Inserts a new account into the database.
 ///
 /// Returns true if a new row was created, or false otherwise (i.e. an account
 /// with the given id already exists).

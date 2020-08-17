@@ -12,14 +12,12 @@ use serde::{Deserialize, Serialize};
 use crate::{utils, Db};
 
 pub fn service(path: &str) -> impl HttpServiceFactory {
-    web::scope(path)
-        .route("/api/connect", web::get().to(connect))
-        .service(
-            web::resource("/connect/callback")
-                .name("connect_callback")
-                .guard(guard::Get())
-                .to(callback),
-        )
+    web::scope(path).route("/", web::get().to(connect)).service(
+        web::resource("/callback")
+            .name("connect_callback")
+            .guard(guard::Get())
+            .to(callback),
+    )
 }
 
 async fn connect(
