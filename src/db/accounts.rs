@@ -1,3 +1,4 @@
+use chrono::{DateTime, TimeZone, Utc};
 use serde::Serialize;
 use sqlx::sqlite::SqliteRow;
 use sqlx::Row;
@@ -48,4 +49,26 @@ pub async fn insert(db: &Db, id: &str, provider: &str, display_name: &str) -> an
     }
 
     Ok(count == 1)
+}
+
+/// Gets the saved credentials (access_token, expires_at, refresh_token) for
+/// a particular account.
+pub async fn credentials(db: &Db, id: &str) -> anyhow::Result<(String, DateTime<Utc>, String)> {
+    let sql = "
+        SELECT access_token, expires_at, refresh_token
+        FROM accounts AS a JOIN providers AS p
+        ON a.provider_id = p.id
+        WHERE a.id = ?
+    ";
+
+    let cred = sqlx::query(sql)
+        .bind(id)
+        .map(|row: SqliteRow| {
+            let expires_at = Utc.timestamp(row.get(1), 0);
+            (row.get(0), expires_at, row.get(2))
+        })
+        .fetch_one(db.pool())
+        .await?;
+
+    Ok(cred)
 }

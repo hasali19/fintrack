@@ -8,7 +8,17 @@ use serde::{Deserialize, Serialize};
 
 #[async_trait]
 pub trait AuthProvider {
-    async fn access_token(&self, provider: &str, true_layer: &Client) -> anyhow::Result<String>;
+    async fn token_for_provider(
+        &self,
+        true_layer: &Client,
+        provider_id: &str,
+    ) -> anyhow::Result<String>;
+
+    async fn token_for_account(
+        &self,
+        true_layer: &Client,
+        account_id: &str,
+    ) -> anyhow::Result<String>;
 }
 
 pub struct Client {
@@ -96,7 +106,7 @@ pub struct AccountNumber {
     pub sort_code: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AccountBalance {
     pub currency: String,
     pub available: f64,
@@ -191,7 +201,11 @@ impl Client {
     }
 
     pub async fn accounts(&self, provider: &str) -> anyhow::Result<Vec<Account>> {
-        let access_token = self.auth_provider.access_token(provider, &self).await?;
+        let access_token = self
+            .auth_provider
+            .token_for_provider(&self, provider)
+            .await?;
+
         Ok(self
             .client
             .get("https://api.truelayer-sandbox.com/data/v1/accounts")
@@ -203,12 +217,8 @@ impl Client {
             .results)
     }
 
-    pub async fn account_balance(
-        &self,
-        provider: &str,
-        account: &str,
-    ) -> anyhow::Result<AccountBalance> {
-        let access_token = self.auth_provider.access_token(provider, &self).await?;
+    pub async fn account_balance(&self, account: &str) -> anyhow::Result<AccountBalance> {
+        let access_token = self.auth_provider.token_for_account(&self, account).await?;
         let res = self
             .client
             .get(&format!(

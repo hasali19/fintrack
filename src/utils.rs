@@ -51,13 +51,31 @@ impl AuthProvider {
 
 #[async_trait]
 impl true_layer::AuthProvider for AuthProvider {
-    async fn access_token(
+    async fn token_for_provider(
         &self,
-        provider: &str,
         true_layer: &true_layer::Client,
+        provider_id: &str,
     ) -> anyhow::Result<String> {
         let (access_token, expires_at, refresh_token) =
-            db::providers::credentials(&self.0, provider).await?;
+            db::providers::credentials(&self.0, provider_id).await?;
+
+        if expires_at > Utc::now() {
+            return Ok(access_token);
+        }
+
+        let token_res = true_layer.renew_token(&refresh_token).await?;
+        let access_token = save_credentials(&self.0, true_layer, token_res).await?;
+
+        Ok(access_token)
+    }
+
+    async fn token_for_account(
+        &self,
+        true_layer: &true_layer::Client,
+        account_id: &str,
+    ) -> anyhow::Result<String> {
+        let (access_token, expires_at, refresh_token) =
+            db::accounts::credentials(&self.0, account_id).await?;
 
         if expires_at > Utc::now() {
             return Ok(access_token);
