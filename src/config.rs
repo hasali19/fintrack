@@ -4,6 +4,7 @@ pub struct Config {
     pub http_address: String,
     pub http_port: u16,
     pub secret_key: Vec<u8>,
+    pub db_path: String,
 }
 
 impl Config {
@@ -12,6 +13,7 @@ impl Config {
             http_address: var_or_str("FINTRACK_HTTP_ADDRESS", "127.0.0.1"),
             http_port: var_or_str("FINTRACK_HTTP_PORT", "8000").parse().unwrap(),
             secret_key: env::var("FINTRACK_SECRET_KEY").unwrap().into_bytes(),
+            db_path: var_or_str("FINTRACK_DB_PATH", "fintrack.db"),
         }
     }
 }

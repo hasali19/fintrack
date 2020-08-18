@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
     femme::start();
 
     let config = Config::from_env();
-    let db = Db::connect("sqlite://fintrack.db").await?;
+    let db = Db::connect(&format!("sqlite://{}", &config.db_path)).await?;
     let true_layer = Data::new(TrueLayerClient::new(AuthProvider::new(db.clone())));
 
     let address = &config.http_address;
