@@ -18,6 +18,8 @@ async fn main() -> anyhow::Result<()> {
     let db = Db::connect(&format!("sqlite://{}", &config.db_path)).await?;
     let true_layer = Data::new(TrueLayerClient::new(AuthProvider::new(db.clone())));
 
+    fintrack::sync::start_worker(db.clone(), true_layer.clone().into_inner());
+
     let address = &config.http_address;
     let port = config.http_port;
 

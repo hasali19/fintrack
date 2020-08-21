@@ -311,10 +311,10 @@ impl Client {
         let access_token = self.auth_provider.token_for_account(&self, account).await?;
         let url = format!(
             "https://api.{}/data/v1/accounts/{}/transactions?from={}&to={}",
-            account,
             self.hostname(),
-            from.format("%DT%T"),
-            to.format("%DT%T")
+            account,
+            from.format("%FT%TZ"),
+            to.format("%FT%TZ")
         );
 
         let res = self
@@ -324,7 +324,7 @@ impl Client {
             .send()
             .await?;
 
-        if res.status().is_success() {
+        if !res.status().is_success() {
             return tl_error(res).await;
         }
 
@@ -346,7 +346,7 @@ impl Client {
             .send()
             .await?;
 
-        if res.status().is_success() {
+        if !res.status().is_success() {
             return tl_error(res).await;
         }
 

@@ -8,11 +8,16 @@ use actix_web::{
 use serde_json::json;
 
 use crate::{db, Db};
+use chrono::{Duration, Utc};
 
 pub fn service(path: &str) -> impl HttpServiceFactory {
     web::scope(path)
         .route("/accounts", web::get().to(get_accounts))
         .route("/accounts/{id}/balance", web::get().to(get_account_balance))
+        .route(
+            "/accounts/{id}/transactions",
+            web::get().to(get_transactions),
+        )
         .default_service(web::route().to(|| {
             HttpResponse::NotFound().json(&json!({
                 "error": "not_found"
@@ -37,6 +42,23 @@ async fn get_account_balance(
         .account_balance(&account_id)
         .await
         .map_err(|_| ErrorInternalServerError("failed to get account balance"))?;
+
+    Ok(HttpResponse::Ok().json(balance))
+}
+
+async fn get_transactions(
+    path: Path<(String,)>,
+    true_layer: Data<true_layer::Client>,
+) -> actix_web::Result<impl Responder> {
+    let (account_id,) = path.into_inner();
+    let balance = true_layer
+        .transactions(
+            &account_id,
+            Utc::now() - Duration::days(365 * 6),
+            Utc::now(),
+        )
+        .await
+        .map_err(|_| ErrorInternalServerError("failed to get transactions"))?;
 
     Ok(HttpResponse::Ok().json(balance))
 }
