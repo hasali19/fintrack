@@ -37,7 +37,7 @@ pub async fn ids_after(
     Ok(transactions)
 }
 
-pub async fn insert_many(db: &Db, transactions: &Vec<Transaction>) -> anyhow::Result<()> {
+pub async fn insert_many(db: &Db, transactions: &[Transaction]) -> anyhow::Result<()> {
     for chunk in transactions.chunks(100) {
         let mut sql = "
             INSERT INTO transactions (

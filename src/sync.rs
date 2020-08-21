@@ -35,7 +35,7 @@ pub async fn sync_all_transactions(db: &Db, true_layer: &TrueLayerClient) -> any
                 description: Some(t.description),
                 merchant_name: t.merchant_name,
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         db::transactions::insert_many(db, &transactions).await?;
 
@@ -86,7 +86,7 @@ async fn sync_transactions(db: &Db, true_layer: &TrueLayerClient) -> anyhow::Res
             let new = new
                 .into_iter()
                 .map(|t| true_layer_to_db(t, &account.id))
-                .collect();
+                .collect::<Vec<_>>();
 
             db::transactions::delete_after(&db, &account.id, today).await?;
             db::transactions::insert_many(&db, &new).await?;
@@ -104,7 +104,7 @@ async fn sync_transactions(db: &Db, true_layer: &TrueLayerClient) -> anyhow::Res
     Ok(())
 }
 
-fn changed(new: &Vec<Transaction>, old: Vec<String>) -> bool {
+fn changed(new: &[Transaction], old: Vec<String>) -> bool {
     if new.len() != old.len() {
         return true;
     }
