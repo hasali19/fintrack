@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS providers (
+CREATE TABLE providers (
     id            TEXT PRIMARY KEY,
     display_name  TEXT NOT NULL,
     logo_url      TEXT NOT NULL,
@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS providers (
     expires_at    TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS accounts (
+CREATE TABLE accounts (
     id           TEXT PRIMARY KEY,
     provider_id  TEXT NOT NULL,
     display_name TEXT NOT NULL,
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     FOREIGN KEY (provider_id) REFERENCES providers (id)
 );
 
-CREATE TABLE IF NOT EXISTS transactions (
+CREATE TABLE transactions (
     id            TEXT PRIMARY KEY,
     account_id    TEXT NOT NULL,
     timestamp     TIMESTAMP NOT NULL,

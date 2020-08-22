@@ -15,9 +15,10 @@ async fn main() -> anyhow::Result<()> {
     femme::start();
 
     let config = Config::from_env();
-    let db = Db::connect(&config.db_url()).await?;
+    let db = Db::connect(&config.db_url).await?;
     let true_layer = Data::new(TrueLayerClient::new(AuthProvider::new(db.clone())));
 
+    fintrack::migrations::run(&db).await?;
     fintrack::sync::start_worker(db.clone(), true_layer.clone().into_inner());
 
     let address = &config.http_address;
