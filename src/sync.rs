@@ -8,47 +8,6 @@ use crate::{db, Db};
 
 const FIVE_MINS: std::time::Duration = std::time::Duration::from_secs(360);
 
-/// Clears all transactions from the database and re-fetches
-/// them from the true layer api
-pub async fn sync_all_transactions(db: &Db, true_layer: &TrueLayerClient) -> anyhow::Result<()> {
-    db::transactions::delete_all(db).await?;
-
-    let accounts = db::accounts::all(db).await?;
-    let to = Utc::now();
-    let from = to - Duration::days(365 * 6);
-
-    for account in accounts {
-        log::info!("fetching transactions for account '{}'", account.id);
-
-        let transactions = true_layer
-            .transactions(&account.id, from, to)
-            .await?
-            .into_iter()
-            .map(|t| db::transactions::Transaction {
-                id: t.transaction_id,
-                account_id: account.id.to_owned(),
-                timestamp: t.timestamp,
-                amount: t.amount,
-                currency: t.currency,
-                transaction_type: Some(t.transaction_type),
-                category: Some(t.transaction_category),
-                description: Some(t.description),
-                merchant_name: t.merchant_name,
-            })
-            .collect::<Vec<_>>();
-
-        db::transactions::insert_many(db, &transactions).await?;
-
-        log::info!(
-            "{} transactions inserted for account '{}'",
-            transactions.len(),
-            account.id
-        );
-    }
-
-    Ok(())
-}
-
 pub fn start_worker(db: Db, true_layer: Arc<TrueLayerClient>) {
     tokio::task::spawn(worker(db, true_layer));
 }
@@ -67,37 +26,69 @@ async fn sync_transactions(db: &Db, true_layer: &TrueLayerClient) -> anyhow::Res
         .date()
         .and_hms(0, 0, 0);
 
-    log::info!("syncing transactions for {}", today);
-
-    let accounts = db::accounts::all(&db).await?;
-    for account in accounts {
-        let saved = db::transactions::ids_after(&db, &account.id, today).await?;
-        let new = true_layer
-            .transactions(&account.id, today, Utc::now())
-            .await?;
-
-        if changed(&new, saved) {
+    for account in db::accounts::all(&db).await? {
+        if db::transactions::has_any(db, &account.id).await? {
             log::info!(
-                "changes detected, reloading all transactions since {} for account '{}'",
+                "syncing transactions since {} for account '{}'",
                 today,
                 account.id
             );
 
-            let new = new
-                .into_iter()
-                .map(|t| true_layer_to_db(t, &account.id))
-                .collect::<Vec<_>>();
+            let saved = db::transactions::ids_after(&db, &account.id, today).await?;
+            let new = true_layer
+                .transactions(&account.id, today, Utc::now())
+                .await?;
 
-            db::transactions::delete_after(&db, &account.id, today).await?;
-            db::transactions::insert_many(&db, &new).await?;
+            if changed(&new, saved) {
+                log::info!(
+                    "changes detected for account '{}', refreshing transactions",
+                    account.id
+                );
 
-            log::info!("{} transactions inserted into db", new.len());
+                let new = new
+                    .into_iter()
+                    .map(|t| true_layer_to_db(t, &account.id))
+                    .collect::<Vec<_>>();
+
+                db::transactions::delete_after(&db, &account.id, today).await?;
+                db::transactions::insert_many(&db, &new).await?;
+
+                log::info!("{} transactions inserted into db", new.len());
+            } else {
+                log::info!(
+                    "no changes detected for account '{}', nothing to do",
+                    account.id,
+                );
+            }
         } else {
             log::info!(
-                "no changes to transactions for account '{}' since {}, nothing to do",
-                account.id,
-                today
+                "first sync for account '{}', fetching all transactions",
+                account.id
             );
+
+            let to = Utc::now();
+            let from = to - Duration::days(365 * 6);
+
+            let transactions = true_layer
+                .transactions(&account.id, from, to)
+                .await?
+                .into_iter()
+                .map(|t| db::transactions::Transaction {
+                    id: t.transaction_id,
+                    account_id: account.id.to_owned(),
+                    timestamp: t.timestamp,
+                    amount: t.amount,
+                    currency: t.currency,
+                    transaction_type: Some(t.transaction_type),
+                    category: Some(t.transaction_category),
+                    description: Some(t.description),
+                    merchant_name: t.merchant_name,
+                })
+                .collect::<Vec<_>>();
+
+            db::transactions::insert_many(db, &transactions).await?;
+
+            log::info!("{} transactions inserted into db", transactions.len());
         }
     }
 

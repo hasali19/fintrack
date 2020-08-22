@@ -16,6 +16,20 @@ pub struct Transaction {
     pub merchant_name: Option<String>,
 }
 
+/// Returns true if there are any recorded transactions
+/// for the specified account.
+pub async fn has_any(db: &Db, account: &str) -> anyhow::Result<bool> {
+    let res: Option<i32> = sqlx::query("SELECT id FROM transactions WHERE account_id = $1")
+        .bind(account)
+        .map(|row: PgRow| row.get(0))
+        .fetch_optional(db.pool())
+        .await?;
+
+    Ok(res.is_some())
+}
+
+/// Returns a list of transaction ids for all transactions
+/// made since the specified timestamp.
 pub async fn ids_after(
     db: &Db,
     account: &str,
@@ -33,6 +47,7 @@ pub async fn ids_after(
     Ok(transactions)
 }
 
+/// Inserts multiple transaction records into the database.
 pub async fn insert_many(db: &Db, transactions: &[Transaction]) -> anyhow::Result<()> {
     for chunk in transactions.chunks(100) {
         let mut sql = "
@@ -80,6 +95,7 @@ pub async fn insert_many(db: &Db, transactions: &[Transaction]) -> anyhow::Resul
     Ok(())
 }
 
+/// Deletes ***all*** transactions from the database.
 pub async fn delete_all(db: &Db) -> anyhow::Result<()> {
     sqlx::query("DELETE FROM transactions")
         .execute(db.pool())
@@ -90,6 +106,8 @@ pub async fn delete_all(db: &Db) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Deletes all transactions for the specified account that were
+/// made since the given timestamp.
 pub async fn delete_after(db: &Db, account: &str, timestamp: DateTime<Utc>) -> anyhow::Result<()> {
     let sql = "
         DELETE FROM transactions
