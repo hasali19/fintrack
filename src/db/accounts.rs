@@ -1,6 +1,6 @@
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Serialize;
-use sqlx::sqlite::SqliteRow;
+use sqlx::postgres::PgRow;
 use sqlx::Row;
 
 use super::Db;
@@ -15,7 +15,7 @@ pub struct Account {
 /// Gets all accounts from the database.
 pub async fn all(db: &Db) -> anyhow::Result<Vec<Account>> {
     let accounts = sqlx::query("SELECT id, provider_id, display_name FROM accounts")
-        .map(|row: SqliteRow| Account {
+        .map(|row: PgRow| Account {
             id: row.get(0),
             provider_id: row.get(1),
             display_name: row.get(2),
@@ -33,7 +33,7 @@ pub async fn all(db: &Db) -> anyhow::Result<Vec<Account>> {
 pub async fn insert(db: &Db, id: &str, provider: &str, display_name: &str) -> anyhow::Result<bool> {
     let sql = "
         INSERT INTO accounts (id, provider_id, display_name)
-        VALUES (?, ?, ?)
+        VALUES ($1, $2, $3)
         ON CONFLICT DO NOTHING
     ";
 
@@ -58,15 +58,12 @@ pub async fn credentials(db: &Db, id: &str) -> anyhow::Result<(String, DateTime<
         SELECT access_token, expires_at, refresh_token
         FROM accounts AS a JOIN providers AS p
         ON a.provider_id = p.id
-        WHERE a.id = ?
+        WHERE a.id = $1
     ";
 
     let cred = sqlx::query(sql)
         .bind(id)
-        .map(|row: SqliteRow| {
-            let expires_at = Utc.timestamp(row.get(1), 0);
-            (row.get(0), expires_at, row.get(2))
-        })
+        .map(|row: PgRow| (row.get(0), Utc.from_utc_datetime(&row.get(1)), row.get(2)))
         .fetch_one(db.pool())
         .await?;
 

@@ -2,23 +2,24 @@ pub mod accounts;
 pub mod providers;
 pub mod transactions;
 
-use sqlx::SqlitePool;
+use sqlx::{Executor, PgPool};
 
 #[derive(Clone)]
-pub struct Db(SqlitePool);
+pub struct Db(PgPool);
 
 impl Db {
     pub async fn connect(url: &str) -> sqlx::Result<Db> {
-        let pool = SqlitePool::new(url).await?;
+        let pool = PgPool::new(url).await?;
 
-        sqlx::query(include_str!("schema.sql"))
-            .execute(&pool)
+        pool.acquire()
+            .await?
+            .execute(include_str!("schema.sql"))
             .await?;
 
         Ok(Db(pool))
     }
 
-    pub fn pool(&self) -> &SqlitePool {
+    pub fn pool(&self) -> &PgPool {
         &self.0
     }
 

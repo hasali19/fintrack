@@ -1,5 +1,5 @@
 use chrono::{DateTime, TimeZone, Utc};
-use sqlx::sqlite::SqliteRow;
+use sqlx::postgres::PgRow;
 use sqlx::Row;
 
 use super::Db;
@@ -16,7 +16,7 @@ pub struct Provider {
 /// Gets the ids of all providers in the database.
 pub async fn all_ids(db: &Db) -> anyhow::Result<Vec<String>> {
     let providers = sqlx::query("SELECT id FROM providers")
-        .map(|row: SqliteRow| row.get(0))
+        .map(|row: PgRow| row.get(0))
         .fetch_all(db.pool())
         .await?;
 
@@ -30,7 +30,7 @@ pub async fn all_ids(db: &Db) -> anyhow::Result<Vec<String>> {
 pub async fn insert(db: &Db, provider: &Provider) -> anyhow::Result<bool> {
     let sql = "
         INSERT INTO providers (id, display_name, logo_url, refresh_token, access_token, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES ($1, $2, $3, $4, $5, $6)
     ";
 
     let count = sqlx::query(sql)
@@ -56,15 +56,12 @@ pub async fn credentials(db: &Db, id: &str) -> anyhow::Result<(String, DateTime<
     let sql = "
         SELECT access_token, expires_at, refresh_token
         FROM providers
-        WHERE id = ?
+        WHERE id = $1
     ";
 
     let cred = sqlx::query(sql)
         .bind(id)
-        .map(|row: SqliteRow| {
-            let expires_at = Utc.timestamp(row.get(1), 0);
-            (row.get(0), expires_at, row.get(2))
-        })
+        .map(|row: PgRow| (row.get(0), Utc.from_utc_datetime(&row.get(1)), row.get(2)))
         .fetch_one(db.pool())
         .await?;
 
@@ -81,13 +78,13 @@ pub async fn update_credentials(
 ) -> anyhow::Result<()> {
     let sql = "
         UPDATE providers
-        SET access_token = ?, expires_at = ?, refresh_token = ?
-        WHERE id = ?
+        SET access_token = $1, expires_at = $2, refresh_token = $3
+        WHERE id = $4
     ";
 
     sqlx::query(sql)
         .bind(access_token)
-        .bind(expires_at.timestamp())
+        .bind(expires_at)
         .bind(refresh_token)
         .bind(id)
         .execute(db.pool())

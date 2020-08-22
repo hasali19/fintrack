@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use sqlx::sqlite::SqliteRow;
+use sqlx::postgres::PgRow;
 use sqlx::Row;
 
 use super::Db;
@@ -21,16 +21,12 @@ pub async fn ids_after(
     account: &str,
     timestamp: DateTime<Utc>,
 ) -> anyhow::Result<Vec<String>> {
-    let sql = "
-        SELECT id
-        FROM transactions
-        WHERE account_id = ? AND timestamp >= ?
-    ";
+    let sql = "SELECT id FROM transactions WHERE account_id = $1 AND timestamp >= $2";
 
     let transactions = sqlx::query(sql)
         .bind(account)
-        .bind(timestamp.timestamp())
-        .map(|row: SqliteRow| row.get(0))
+        .bind(timestamp)
+        .map(|row: PgRow| row.get(0))
         .fetch_all(db.pool())
         .await?;
 
@@ -41,23 +37,25 @@ pub async fn insert_many(db: &Db, transactions: &[Transaction]) -> anyhow::Resul
     for chunk in transactions.chunks(100) {
         let mut sql = "
             INSERT INTO transactions (
-                id,
-                account_id,
-                timestamp,
-                amount,
-                currency,
-                type,
-                category,
-                description,
-                merchant_name
+                id, account_id, timestamp, amount, currency,
+                type, category, description, merchant_name
             ) VALUES
         "
         .to_owned();
 
+        // FIXME: Well this is horrible
         for i in 0..chunk.len() {
-            sql.push_str(" (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            sql += " (";
+            for j in 0..9 {
+                sql += "$";
+                itoa::fmt(&mut sql, i * 9 + j + 1)?;
+                if j < 8 {
+                    sql += ", ";
+                }
+            }
+            sql += ")";
             if i != chunk.len() - 1 {
-                sql.push_str(", ");
+                sql += ", ";
             }
         }
 
@@ -67,7 +65,7 @@ pub async fn insert_many(db: &Db, transactions: &[Transaction]) -> anyhow::Resul
                 query
                     .bind(&t.id)
                     .bind(&t.account_id)
-                    .bind(t.timestamp.timestamp())
+                    .bind(t.timestamp)
                     .bind(t.amount)
                     .bind(&t.currency)
                     .bind(&t.transaction_type)
@@ -95,12 +93,12 @@ pub async fn delete_all(db: &Db) -> anyhow::Result<()> {
 pub async fn delete_after(db: &Db, account: &str, timestamp: DateTime<Utc>) -> anyhow::Result<()> {
     let sql = "
         DELETE FROM transactions
-        WHERE account_id = ? AND timestamp >= ?
+        WHERE account_id = $1 AND timestamp >= $2
     ";
 
     let rows = sqlx::query(sql)
         .bind(account)
-        .bind(timestamp.date().and_hms(0, 0, 0).timestamp())
+        .bind(timestamp.date().and_hms(0, 0, 0))
         .execute(db.pool())
         .await?;
 

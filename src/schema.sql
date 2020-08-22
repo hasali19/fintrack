@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS providers (
     logo_url      TEXT NOT NULL,
     refresh_token TEXT NOT NULL,
     access_token  TEXT,
-    expires_at    INTEGER
+    expires_at    TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE TABLE IF NOT EXISTS transactions (
     id            TEXT PRIMARY KEY,
     account_id    TEXT NOT NULL,
-    timestamp     INTEGER NOT NULL,
+    timestamp     TIMESTAMP NOT NULL,
     amount        REAL NOT NULL,
     currency      TEXT NOT NULL,
     type          TEXT,
