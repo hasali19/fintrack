@@ -19,7 +19,7 @@ pub struct Transaction {
 /// Returns true if there are any recorded transactions
 /// for the specified account.
 pub async fn has_any(db: &Db, account: &str) -> anyhow::Result<bool> {
-    let res: Option<i32> = sqlx::query("SELECT id FROM transactions WHERE account_id = $1")
+    let res: Option<i32> = sqlx::query("SELECT 1 FROM transactions WHERE account_id = $1")
         .bind(account)
         .map(|row: PgRow| row.get(0))
         .fetch_optional(db.pool())
