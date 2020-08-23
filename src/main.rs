@@ -1,8 +1,10 @@
+use std::path::Path;
+
 use actix_files::{Files, NamedFile};
 use actix_web::{
     middleware::Logger,
     web::{self, Data},
-    App, HttpServer, Responder,
+    App, HttpRequest, HttpServer, Responder,
 };
 
 use env_logger::Env;
@@ -34,8 +36,7 @@ async fn main() -> anyhow::Result<()> {
                 .app_data(true_layer.clone())
                 .service(services::connect("/connect"))
                 .service(services::api("/api"))
-                .service(Files::new("/static", "client/build/static"))
-                .default_service(web::get().to(spa_index))
+                .default_service(web::get().to(spa_fallback))
         }
     })
     .bind(format!("{}:{}", address, port))?
@@ -47,6 +48,11 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn spa_index() -> actix_web::Result<impl Responder> {
-    Ok(NamedFile::open("client/build/index.html")?)
+async fn spa_fallback(req: HttpRequest) -> actix_web::Result<impl Responder> {
+    let path = Path::new("client/build").join(req.path().trim_start_matches('/'));
+    if path.is_file() {
+        Ok(NamedFile::open(path)?)
+    } else {
+        Ok(NamedFile::open("client/build/index.html")?)
+    }
 }
