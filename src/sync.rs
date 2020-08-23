@@ -6,7 +6,7 @@ use true_layer::{Client as TrueLayerClient, Transaction};
 
 use crate::{db, Db};
 
-const FIVE_MINS: std::time::Duration = std::time::Duration::from_secs(360);
+const FIVE_MINS: std::time::Duration = std::time::Duration::from_secs(300);
 
 pub fn start_worker(db: Db, true_layer: Arc<TrueLayerClient>) {
     tokio::task::spawn(worker(db, true_layer));
