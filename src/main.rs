@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use actix_files::{Files, NamedFile};
+use actix_files::NamedFile;
 use actix_web::{
     middleware::Logger,
     web::{self, Data},
