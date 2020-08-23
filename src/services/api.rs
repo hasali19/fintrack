@@ -8,7 +8,6 @@ use actix_web::{
 use serde_json::json;
 
 use crate::{db, Db};
-use chrono::{Duration, Utc};
 
 pub fn service(path: &str) -> impl HttpServiceFactory {
     web::scope(path)
@@ -46,19 +45,11 @@ async fn get_account_balance(
     Ok(HttpResponse::Ok().json(balance))
 }
 
-async fn get_transactions(
-    path: Path<(String,)>,
-    true_layer: Data<true_layer::Client>,
-) -> actix_web::Result<impl Responder> {
+async fn get_transactions(path: Path<(String,)>, db: Db) -> actix_web::Result<impl Responder> {
     let (account_id,) = path.into_inner();
-    let balance = true_layer
-        .transactions(
-            &account_id,
-            Utc::now() - Duration::days(365 * 6),
-            Utc::now(),
-        )
+    let transactions = db::transactions::all(&db, &account_id)
         .await
-        .map_err(|_| ErrorInternalServerError("failed to get transactions"))?;
+        .map_err(|_| ErrorInternalServerError("failed to get transactions from db"))?;
 
-    Ok(HttpResponse::Ok().json(balance))
+    Ok(HttpResponse::Ok().json(transactions))
 }

@@ -1,9 +1,10 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use sqlx::postgres::PgRow;
 use sqlx::Row;
 
 use super::Db;
 
+#[derive(Debug, serde::Serialize)]
 pub struct Transaction {
     pub id: String,
     pub account_id: String,
@@ -28,6 +29,34 @@ pub async fn has_any(db: &Db, account: &str) -> anyhow::Result<bool> {
     Ok(res.is_some())
 }
 
+/// Returns all transactions for the given account.
+pub async fn all(db: &Db, account: &str) -> anyhow::Result<Vec<Transaction>> {
+    let query = "
+        SELECT id, account_id, timestamp, amount, currency,
+               type, category, description, merchant_name
+        FROM transactions
+        WHERE account_id = $1
+    ";
+
+    let transactions = sqlx::query(query)
+        .bind(account)
+        .map(|row: PgRow| Transaction {
+            id: row.get(0),
+            account_id: row.get(1),
+            timestamp: Utc.from_utc_datetime(&row.get(2)),
+            amount: row.get::<f32, _>(3) as f64,
+            currency: row.get(4),
+            transaction_type: row.get(5),
+            category: row.get(6),
+            description: row.get(7),
+            merchant_name: row.get(8),
+        })
+        .fetch_all(db.pool())
+        .await?;
+
+    Ok(transactions)
+}
+
 /// Returns a list of transaction ids for all transactions
 /// made since the specified timestamp.
 pub async fn ids_after(
@@ -35,7 +64,10 @@ pub async fn ids_after(
     account: &str,
     timestamp: DateTime<Utc>,
 ) -> anyhow::Result<Vec<String>> {
-    let sql = "SELECT id FROM transactions WHERE account_id = $1 AND timestamp >= $2";
+    let sql = "
+        SELECT id FROM transactions
+        WHERE account_id = $1 AND timestamp >= $2
+    ";
 
     let transactions = sqlx::query(sql)
         .bind(account)
