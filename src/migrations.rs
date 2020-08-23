@@ -1,6 +1,7 @@
 use anyhow::anyhow;
+use futures::StreamExt;
 use rust_embed::RustEmbed;
-use sqlx::{postgres::PgRow, Cursor, Executor, Row};
+use sqlx::{postgres::PgRow, Executor, Row};
 
 use crate::Db;
 
@@ -12,6 +13,7 @@ pub async fn run(db: &Db) -> anyhow::Result<()> {
     let mut db_version = get_current_version(&db).await?;
 
     for file in Migration::iter() {
+        let file: std::borrow::Cow<'_, str> = file;
         let version: i32 = file.split('_').next().unwrap().parse()?;
         if version <= db_version {
             continue;
@@ -51,10 +53,11 @@ async fn get_current_version(db: &Db) -> anyhow::Result<i32> {
         SELECT version FROM _migration_version;
     ";
 
-    let mut pool = db.pool();
+    let pool = db.pool();
     let mut cursor = pool.fetch(sql);
-    let row: Option<PgRow> = cursor.next().await?;
-    let version: Option<i32> = row.unwrap().get(0);
+
+    let row: PgRow = cursor.next().await.unwrap()?;
+    let version: Option<i32> = row.get(0);
 
     Ok(version.unwrap_or(0))
 }

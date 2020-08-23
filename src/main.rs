@@ -5,6 +5,7 @@ use actix_web::{
     App, HttpServer, Responder,
 };
 
+use env_logger::Env;
 use fintrack::utils::AuthProvider;
 use fintrack::{services, Config, Db};
 use true_layer::Client as TrueLayerClient;
@@ -12,7 +13,7 @@ use true_layer::Client as TrueLayerClient;
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
-    femme::start();
+    env_logger::from_env(Env::default().default_filter_or("info")).init();
 
     let config = Config::from_env();
     let db = Db::connect(&config.db_url).await?;

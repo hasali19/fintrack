@@ -1,6 +1,6 @@
 use chrono::{DateTime, TimeZone, Utc};
 use sqlx::postgres::PgRow;
-use sqlx::Row;
+use sqlx::{Done, Row};
 
 use super::Db;
 
@@ -16,7 +16,7 @@ pub struct Provider {
 /// Gets the ids of all providers in the database.
 pub async fn all_ids(db: &Db) -> anyhow::Result<Vec<String>> {
     let providers = sqlx::query("SELECT id FROM providers")
-        .map(|row: PgRow| row.get(0))
+        .try_map(|row: PgRow| Ok(row.get(0)))
         .fetch_all(db.pool())
         .await?;
 
@@ -41,7 +41,8 @@ pub async fn insert(db: &Db, provider: &Provider) -> anyhow::Result<bool> {
         .bind(&provider.access_token)
         .bind(provider.expires_at.timestamp())
         .execute(db.pool())
-        .await?;
+        .await?
+        .rows_affected();
 
     if count > 1 {
         return Err(anyhow::anyhow!("unexpected inserted row count: {}", count));
@@ -61,7 +62,7 @@ pub async fn credentials(db: &Db, id: &str) -> anyhow::Result<(String, DateTime<
 
     let cred = sqlx::query(sql)
         .bind(id)
-        .map(|row: PgRow| (row.get(0), Utc.from_utc_datetime(&row.get(1)), row.get(2)))
+        .try_map(|row: PgRow| Ok((row.get(0), Utc.from_utc_datetime(&row.get(1)), row.get(2))))
         .fetch_one(db.pool())
         .await?;
 

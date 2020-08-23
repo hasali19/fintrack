@@ -1,6 +1,7 @@
 use chrono::{DateTime, TimeZone, Utc};
+use rust_decimal::Decimal;
 use sqlx::postgres::PgRow;
-use sqlx::Row;
+use sqlx::{Done, Row};
 
 use super::Db;
 
@@ -9,7 +10,7 @@ pub struct Transaction {
     pub id: String,
     pub account_id: String,
     pub timestamp: DateTime<Utc>,
-    pub amount: f64,
+    pub amount: Decimal,
     pub currency: String,
     pub transaction_type: Option<String>,
     pub category: Option<String>,
@@ -22,7 +23,7 @@ pub struct Transaction {
 pub async fn has_any(db: &Db, account: &str) -> anyhow::Result<bool> {
     let res: Option<i32> = sqlx::query("SELECT 1 FROM transactions WHERE account_id = $1")
         .bind(account)
-        .map(|row: PgRow| row.get(0))
+        .try_map(|row: PgRow| Ok(row.get(0)))
         .fetch_optional(db.pool())
         .await?;
 
@@ -40,16 +41,18 @@ pub async fn all(db: &Db, account: &str) -> anyhow::Result<Vec<Transaction>> {
 
     let transactions = sqlx::query(query)
         .bind(account)
-        .map(|row: PgRow| Transaction {
-            id: row.get(0),
-            account_id: row.get(1),
-            timestamp: Utc.from_utc_datetime(&row.get(2)),
-            amount: row.get::<f32, _>(3) as f64,
-            currency: row.get(4),
-            transaction_type: row.get(5),
-            category: row.get(6),
-            description: row.get(7),
-            merchant_name: row.get(8),
+        .try_map(|row: PgRow| {
+            Ok(Transaction {
+                id: row.get(0),
+                account_id: row.get(1),
+                timestamp: Utc.from_utc_datetime(&row.get(2)),
+                amount: row.get(3),
+                currency: row.get(4),
+                transaction_type: row.get(5),
+                category: row.get(6),
+                description: row.get(7),
+                merchant_name: row.get(8),
+            })
         })
         .fetch_all(db.pool())
         .await?;
@@ -72,7 +75,7 @@ pub async fn ids_after(
     let transactions = sqlx::query(sql)
         .bind(account)
         .bind(timestamp)
-        .map(|row: PgRow| row.get(0))
+        .try_map(|row: PgRow| Ok(row.get(0)))
         .fetch_all(db.pool())
         .await?;
 
@@ -146,13 +149,14 @@ pub async fn delete_after(db: &Db, account: &str, timestamp: DateTime<Utc>) -> a
         WHERE account_id = $1 AND timestamp >= $2
     ";
 
-    let rows = sqlx::query(sql)
+    let count = sqlx::query(sql)
         .bind(account)
         .bind(timestamp.date().and_hms(0, 0, 0))
         .execute(db.pool())
-        .await?;
+        .await?
+        .rows_affected();
 
-    log::info!("{} transactions deleted from db", rows);
+    log::info!("{} transactions deleted from db", count);
 
     Ok(())
 }

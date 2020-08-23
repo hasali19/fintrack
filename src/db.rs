@@ -9,7 +9,7 @@ pub struct Db(PgPool);
 
 impl Db {
     pub async fn connect(url: &str) -> sqlx::Result<Db> {
-        Ok(Db(PgPool::new(url).await?))
+        Ok(Db(PgPool::connect(url).await?))
     }
 
     pub fn pool(&self) -> &PgPool {

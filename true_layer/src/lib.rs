@@ -5,6 +5,7 @@ use anyhow::anyhow;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use reqwest::{header, StatusCode};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -137,7 +138,7 @@ pub struct Transaction {
     pub transaction_category: String,
     pub transaction_classification: Vec<String>,
     pub merchant_name: Option<String>,
-    pub amount: f64,
+    pub amount: Decimal,
     pub currency: String,
     pub meta: Value,
     pub running_balance: TransactionRunningBalance,
