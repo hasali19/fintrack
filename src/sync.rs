@@ -22,9 +22,7 @@ async fn worker(db: Db, true_layer: Arc<TrueLayerClient>) {
 }
 
 async fn sync_transactions(db: &Db, true_layer: &TrueLayerClient) -> anyhow::Result<()> {
-    let today = (Utc::now() - chrono::Duration::days(30))
-        .date()
-        .and_hms(0, 0, 0);
+    let today = Utc::now().date().and_hms(0, 0, 0);
 
     for account in db::accounts::all(&db).await? {
         if db::transactions::has_any(db, &account.id).await? {
