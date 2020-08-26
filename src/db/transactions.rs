@@ -37,6 +37,7 @@ pub async fn all(db: &Db, account: &str) -> anyhow::Result<Vec<Transaction>> {
                type, category, description, merchant_name
         FROM transactions
         WHERE account_id = $1
+        ORDER BY timestamp DESC
     ";
 
     let transactions = sqlx::query(query)
